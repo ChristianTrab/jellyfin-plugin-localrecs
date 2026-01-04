@@ -545,19 +545,8 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
         {
             try
             {
-                var virtualItem = e.Item;
-                if (virtualItem == null || string.IsNullOrEmpty(virtualItem.Path))
-                {
-                    return;
-                }
-
-                // Check if this is a virtual library .strm file
-                if (!virtualItem.Path.EndsWith(".strm", StringComparison.OrdinalIgnoreCase))
-                {
-                    return;
-                }
-
-                if (!IsVirtualLibraryItem(virtualItem))
+                var item = e.Item;
+                if (item == null || string.IsNullOrEmpty(item.Path))
                 {
                     return;
                 }
@@ -565,24 +554,106 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
                 var userId = e.UserId;
                 var userData = e.UserData;
 
-                // AUTO-REMOVAL: If user has started watching (any progress > 0), remove the recommendation
-                if (userData.PlaybackPositionTicks > 0)
+                // Handle virtual library item changes (sync to source)
+                if (item.Path.EndsWith(".strm", StringComparison.OrdinalIgnoreCase) && IsVirtualLibraryItem(item))
                 {
-                    _logger.LogInformation(
-                        "User {UserId} started watching recommendation '{ItemName}', removing from virtual library",
-                        userId,
-                        virtualItem.Name);
-
-                    RemoveVirtualLibraryItem(userId, virtualItem);
+                    HandleVirtualItemDataChange(userId, item, userData);
                     return;
                 }
 
-                // If no playback progress, sync normally (for favorites, etc.)
-                QueuePlayStatusUpdate(userId, virtualItem, userData);
+                // Handle source library item changes (sync to virtual and check for removal)
+                HandleSourceItemDataChange(userId, item, userData);
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Failed to process user data update for item {ItemId}", e.Item?.Id);
+            }
+        }
+
+        private void HandleVirtualItemDataChange(Guid userId, BaseItem virtualItem, MediaBrowser.Controller.Entities.UserItemData userData)
+        {
+            // AUTO-REMOVAL: If user has started watching (any progress > 0 or any plays), remove the recommendation
+            // This covers both partial playback and completed episodes/movies
+            if (userData.PlaybackPositionTicks > 0 || userData.PlayCount > 0 || userData.Played)
+            {
+                _logger.LogInformation(
+                    "User {UserId} started watching recommendation '{ItemName}' (PlaybackPosition={Position}, PlayCount={Count}, Played={Played}), removing from virtual library",
+                    userId,
+                    virtualItem.Name,
+                    userData.PlaybackPositionTicks,
+                    userData.PlayCount,
+                    userData.Played);
+
+                RemoveVirtualLibraryItem(userId, virtualItem);
+                return;
+            }
+
+            // If no playback progress, sync normally (for favorites, etc.)
+            QueuePlayStatusUpdate(userId, virtualItem, userData);
+        }
+
+        private void HandleSourceItemDataChange(Guid userId, BaseItem sourceItem, MediaBrowser.Controller.Entities.UserItemData userData)
+        {
+            // If source item has been watched, find and remove corresponding virtual item
+            if (userData.PlaybackPositionTicks > 0 || userData.PlayCount > 0 || userData.Played)
+            {
+                RemoveVirtualItemForSource(userId, sourceItem, userData);
+            }
+        }
+
+        private void RemoveVirtualItemForSource(Guid userId, BaseItem sourceItem, MediaBrowser.Controller.Entities.UserItemData userData)
+        {
+            try
+            {
+                // Find virtual library items that point to this source item
+                var userVirtualLibraryPath = Path.Combine(_virtualLibraryBasePath, userId.ToString());
+                if (!Directory.Exists(userVirtualLibraryPath))
+                {
+                    return;
+                }
+
+                // Search for .strm files that contain this source path
+                var strmFiles = Directory.GetFiles(userVirtualLibraryPath, "*.strm", SearchOption.AllDirectories);
+                foreach (var strmFile in strmFiles)
+                {
+                    try
+                    {
+                        var strmContent = File.ReadAllText(strmFile).Trim();
+                        if (string.IsNullOrEmpty(strmContent))
+                        {
+                            continue;
+                        }
+
+                        // Check if this .strm points to our source item
+                        if (!strmContent.Equals(sourceItem.Path, StringComparison.OrdinalIgnoreCase))
+                        {
+                            continue;
+                        }
+
+                        // Found a virtual item pointing to this source
+                        var virtualItem = _libraryManager.FindByPath(strmFile, isFolder: false);
+                        if (virtualItem != null)
+                        {
+                            _logger.LogInformation(
+                                "User {UserId} watched source item '{SourceName}' (PlaybackPosition={Position}, PlayCount={Count}, Played={Played}), removing corresponding virtual library item",
+                                userId,
+                                sourceItem.Name,
+                                userData.PlaybackPositionTicks,
+                                userData.PlayCount,
+                                userData.Played);
+
+                            RemoveVirtualLibraryItem(userId, virtualItem);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Failed to check .strm file for source item match: {Path}", strmFile);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to find virtual items for source item {ItemId}", sourceItem.Id);
             }
         }
 
