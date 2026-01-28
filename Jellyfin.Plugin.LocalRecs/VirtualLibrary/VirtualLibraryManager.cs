@@ -3,7 +3,9 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using Jellyfin.Plugin.LocalRecs.Configuration;
 using Jellyfin.Plugin.LocalRecs.Models;
+using Jellyfin.Plugin.LocalRecs.Services;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Entities.TV;
 using MediaBrowser.Controller.Library;
@@ -20,6 +22,7 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
     {
         private readonly ILogger<VirtualLibraryManager> _logger;
         private readonly ILibraryManager _libraryManager;
+        private readonly IImageSyncService _imageSyncService;
         private readonly string _virtualLibraryBasePath;
 
         /// <summary>
@@ -32,15 +35,18 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
         /// </summary>
         /// <param name="logger">Logger instance.</param>
         /// <param name="libraryManager">Library manager for media access.</param>
+        /// <param name="imageSyncService">Image sync service for copying images.</param>
         /// <param name="virtualLibraryBasePath">Base path for virtual libraries.</param>
         /// <exception cref="ArgumentNullException">Thrown when any parameter is null.</exception>
         public VirtualLibraryManager(
             ILogger<VirtualLibraryManager> logger,
             ILibraryManager libraryManager,
+            IImageSyncService imageSyncService,
             string virtualLibraryBasePath)
         {
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _libraryManager = libraryManager ?? throw new ArgumentNullException(nameof(libraryManager));
+            _imageSyncService = imageSyncService ?? throw new ArgumentNullException(nameof(imageSyncService));
             _virtualLibraryBasePath = virtualLibraryBasePath ?? throw new ArgumentNullException(nameof(virtualLibraryBasePath));
         }
 
@@ -365,6 +371,13 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
                 // 2. Create trailer .strm files if the source has local trailers
                 var trailerCount = CreateTrailerStrmFiles(movieFolderPath, baseFilename, item);
 
+                // 3. Sync images from source item (poster, backdrop)
+                var config = Plugin.Instance?.Configuration ?? new PluginConfiguration();
+                if (config.EnableImageSync)
+                {
+                    _imageSyncService.SyncImages(item, movieFolderPath, config.SyncBackdrops);
+                }
+
                 _logger.LogDebug(
                     "Created movie folder: {FolderName} with .strm and {TrailerCount} trailer(s)",
                     folderName,
@@ -503,7 +516,14 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
                 // 1. Create trailer .strm files if the source has local trailers
                 var trailerCount = CreateTrailerStrmFiles(seriesPath, seriesFolderName, series);
 
-                // 2. Get all episodes for this series
+                // 2. Sync images from source series (poster, backdrop)
+                var config = Plugin.Instance?.Configuration ?? new PluginConfiguration();
+                if (config.EnableImageSync)
+                {
+                    _imageSyncService.SyncImages(series, seriesPath, config.SyncBackdrops);
+                }
+
+                // 3. Get all episodes for this series
                 var episodes = _libraryManager.GetItemList(new InternalItemsQuery
                 {
                     ParentId = series.Id,

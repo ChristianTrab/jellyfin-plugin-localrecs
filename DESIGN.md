@@ -326,6 +326,34 @@ The Recommendation Engine supports an optional rating proximity feature that ble
 - Points to source trailer files on disk (not remote URLs)
 - Remote trailer URLs don't work on all clients (e.g., Roku)
 
+#### 7a. Image Sync Service
+**Purpose:** Copy poster and backdrop images from source library items to virtual library folders.
+
+**Problem Solved:**
+- Users who customize posters (e.g., French posters, custom artwork) see defaults in recommendation libraries
+- Jellyfin fetches fresh metadata from TMDB/TVDB for virtual library items, ignoring source customizations
+
+**Implementation:**
+- Copies `poster.jpg` and `backdrop.jpg` (configurable) to virtual library folders
+- Uses Jellyfin's `BaseItem.GetImagePath(ImageType, index)` to locate source images
+- Preserves original file format (jpg/png/webp)
+- Graceful error handling (missing images don't fail the sync)
+
+**Directory Structure with Images:**
+```
+Movie Title (2020) [tmdbid-12345]/
+├── Movie Title (2020) [tmdbid-12345].strm    # Points to source media
+├── poster.jpg                                  # Copied from source item
+├── backdrop.jpg                                # Copied from source (optional)
+└── Movie Title-trailer.strm                    # Trailer (if exists)
+```
+
+**Configuration Options:**
+- `EnableImageSync` (default: true) - Copy poster images to recommendation libraries
+- `SyncBackdrops` (default: true) - Also copy backdrop/fanart images
+
+**Note:** This only syncs images, not text metadata (titles, descriptions, ratings). NFO files don't work for .strm content, and modifying Jellyfin's database directly would be fragile.
+
 **Sync Algorithm:** Clear-and-recreate
 1. Delete all existing files and folders
 2. Recreate directory structure
@@ -515,7 +543,7 @@ All settings exposed via plugin configuration UI and stored in Jellyfin's plugin
 
 ### Virtual Library Metadata Display
 
-**Limitation:** Items in the virtual recommendation libraries do not display full metadata (runtime, ratings, genres, cast, etc.) in the Jellyfin UI.
+**Limitation:** Items in the virtual recommendation libraries do not display full text metadata (runtime, ratings, genres, cast, etc.) in the Jellyfin UI.
 
 **Why this happens:**
 - Virtual library items are `.strm` files that point to the original media files
@@ -523,18 +551,25 @@ All settings exposed via plugin configuration UI and stored in Jellyfin's plugin
 - The `.strm` file format only contains a path reference, not embedded metadata
 - Jellyfin's metadata providers don't fetch metadata for `.strm` files pointing to local content
 
-**Impact:**
-- Runtime/duration is not displayed for recommendations (shows as unknown or 0:00)
-- Ratings, genres, and cast information may not appear
-- Poster images and backdrops still work (Jellyfin resolves these from the source item)
+**What DOES work:**
+- **Poster images:** Custom posters are synced from source items (via Image Sync Service)
+- **Backdrop images:** Custom backdrops are synced from source items (configurable)
+- **Playback:** All media plays correctly through the source files
 
-**Workarounds considered but not viable:**
+**What does NOT work:**
+- Runtime/duration is not displayed for recommendations (shows as unknown or 0:00)
+- Ratings, genres, and cast information may not appear in the UI
+- Any text metadata customizations from source items
+
+**Workarounds considered but not viable for text metadata:**
 - NFO files: Jellyfin ignores NFO files for `.strm` content
 - Direct database manipulation: Would bypass Jellyfin's APIs and risk data corruption
 - Custom metadata providers: Would require significant additional complexity
+- Jellyfin API calls post-scan: Fragile timing, items may not exist yet when called
 
 **User impact:**
 - Users can still play recommendations normally
+- Custom posters and backdrops are preserved in recommendation libraries
 - Full metadata is visible once playback begins (from the source item)
 - This is a cosmetic limitation that doesn't affect recommendation quality or playback
 

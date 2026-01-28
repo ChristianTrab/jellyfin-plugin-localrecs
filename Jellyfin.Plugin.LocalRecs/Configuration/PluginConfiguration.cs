@@ -24,6 +24,8 @@ namespace Jellyfin.Plugin.LocalRecs.Configuration
             MaxVocabularyTags = 500;
             EnableRatingProximity = true;
             RatingProximityWeight = 0.2;
+            EnableImageSync = true;
+            SyncBackdrops = true;
         }
 
         /// <summary>
@@ -83,6 +85,20 @@ namespace Jellyfin.Plugin.LocalRecs.Configuration
         /// Default: 0.2 (20% rating proximity, 80% content similarity).
         /// </summary>
         public double RatingProximityWeight { get; set; }
+
+        /// <summary>
+        /// Gets or sets a value indicating whether to sync images (posters, backdrops) from source items.
+        /// When enabled, custom images set on source library items will be copied to recommendation libraries.
+        /// Default: true.
+        /// </summary>
+        public bool EnableImageSync { get; set; }
+
+        /// <summary>
+        /// Gets or sets a value indicating whether to sync backdrop images in addition to posters.
+        /// Only applies when EnableImageSync is true.
+        /// Default: true.
+        /// </summary>
+        public bool SyncBackdrops { get; set; }
 
         /// <summary>
         /// Validates the configuration and returns validation errors.

@@ -3,7 +3,9 @@ using System.IO;
 using System.Linq;
 using FluentAssertions;
 using Jellyfin.Plugin.LocalRecs.Models;
+using Jellyfin.Plugin.LocalRecs.Services;
 using Jellyfin.Plugin.LocalRecs.VirtualLibrary;
+using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Entities.Movies;
 using MediaBrowser.Controller.Library;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -20,6 +22,7 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Unit.VirtualLibrary
         private readonly string _testBasePath;
         private readonly VirtualLibraryManager _manager;
         private readonly Mock<ILibraryManager> _mockLibraryManager;
+        private readonly Mock<IImageSyncService> _mockImageSyncService;
 
         public VirtualLibraryManagerTests()
         {
@@ -28,10 +31,12 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Unit.VirtualLibrary
             Directory.CreateDirectory(_testBasePath);
 
             _mockLibraryManager = new Mock<ILibraryManager>();
+            _mockImageSyncService = new Mock<IImageSyncService>();
 
             _manager = new VirtualLibraryManager(
                 NullLogger<VirtualLibraryManager>.Instance,
                 _mockLibraryManager.Object,
+                _mockImageSyncService.Object,
                 _testBasePath);
         }
 
@@ -269,5 +274,157 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Unit.VirtualLibrary
                 .Where(f => !f.Contains("-trailer")).ToArray();
             strmFiles.Should().HaveCount(1);
         }
+
+        #region Image Sync Integration Tests
+
+        [Fact]
+        public void SyncRecommendations_CallsImageSyncService_WhenImageSyncEnabled()
+        {
+            // Arrange
+            var userId = Guid.NewGuid();
+            _manager.EnsureUserDirectoriesExist(userId, "TestUser");
+
+            var movieId = Guid.NewGuid();
+            var mockMovie = new Movie
+            {
+                Id = movieId,
+                Name = "Test Movie",
+                Path = "/media/movies/TestMovie.mkv",
+                ProductionYear = 2023
+            };
+
+            _mockLibraryManager.Setup(m => m.GetItemById(movieId)).Returns(mockMovie);
+
+            var recommendations = new[]
+            {
+                new ScoredRecommendation(movieId, 0.95f)
+            };
+
+            // Act
+            _manager.SyncRecommendations(userId, recommendations, MediaType.Movie);
+
+            // Assert - ImageSyncService.SyncImages should have been called
+            // Note: Plugin.Instance is null in tests, so config defaults to EnableImageSync=true
+            _mockImageSyncService.Verify(
+                s => s.SyncImages(
+                    It.IsAny<BaseItem>(),
+                    It.IsAny<string>(),
+                    It.IsAny<bool>()),
+                Times.Once);
+        }
+
+        [Fact]
+        public void SyncRecommendations_CallsImageSyncServiceWithCorrectItem()
+        {
+            // Arrange
+            var userId = Guid.NewGuid();
+            _manager.EnsureUserDirectoriesExist(userId, "TestUser");
+
+            var movieId = Guid.NewGuid();
+            var mockMovie = new Movie
+            {
+                Id = movieId,
+                Name = "Specific Test Movie",
+                Path = "/media/movies/SpecificTestMovie.mkv",
+                ProductionYear = 2023
+            };
+
+            _mockLibraryManager.Setup(m => m.GetItemById(movieId)).Returns(mockMovie);
+
+            var recommendations = new[]
+            {
+                new ScoredRecommendation(movieId, 0.95f)
+            };
+
+            // Act
+            _manager.SyncRecommendations(userId, recommendations, MediaType.Movie);
+
+            // Assert - Verify the correct item was passed to SyncImages
+            _mockImageSyncService.Verify(
+                s => s.SyncImages(
+                    It.Is<BaseItem>(item => item.Id == movieId && item.Name == "Specific Test Movie"),
+                    It.IsAny<string>(),
+                    It.IsAny<bool>()),
+                Times.Once);
+        }
+
+        [Fact]
+        public void SyncRecommendations_CallsImageSyncServiceForEachMovie()
+        {
+            // Arrange
+            var userId = Guid.NewGuid();
+            _manager.EnsureUserDirectoriesExist(userId, "TestUser");
+
+            var movieId1 = Guid.NewGuid();
+            var movieId2 = Guid.NewGuid();
+            var movieId3 = Guid.NewGuid();
+
+            var mockMovie1 = new Movie { Id = movieId1, Name = "Movie 1", Path = "/media/movies/Movie1.mkv", ProductionYear = 2023 };
+            var mockMovie2 = new Movie { Id = movieId2, Name = "Movie 2", Path = "/media/movies/Movie2.mkv", ProductionYear = 2023 };
+            var mockMovie3 = new Movie { Id = movieId3, Name = "Movie 3", Path = "/media/movies/Movie3.mkv", ProductionYear = 2023 };
+
+            _mockLibraryManager.Setup(m => m.GetItemById(movieId1)).Returns(mockMovie1);
+            _mockLibraryManager.Setup(m => m.GetItemById(movieId2)).Returns(mockMovie2);
+            _mockLibraryManager.Setup(m => m.GetItemById(movieId3)).Returns(mockMovie3);
+
+            var recommendations = new[]
+            {
+                new ScoredRecommendation(movieId1, 0.95f),
+                new ScoredRecommendation(movieId2, 0.90f),
+                new ScoredRecommendation(movieId3, 0.85f)
+            };
+
+            // Act
+            _manager.SyncRecommendations(userId, recommendations, MediaType.Movie);
+
+            // Assert - ImageSyncService.SyncImages should have been called 3 times
+            _mockImageSyncService.Verify(
+                s => s.SyncImages(It.IsAny<BaseItem>(), It.IsAny<string>(), It.IsAny<bool>()),
+                Times.Exactly(3));
+        }
+
+        [Fact]
+        public void SyncRecommendations_ImageSyncFailure_DoesNotFailStrmCreation()
+        {
+            // Arrange
+            var userId = Guid.NewGuid();
+            _manager.EnsureUserDirectoriesExist(userId, "TestUser");
+
+            var movieId = Guid.NewGuid();
+            var mockMovie = new Movie
+            {
+                Id = movieId,
+                Name = "Test Movie",
+                Path = "/media/movies/TestMovie.mkv",
+                ProductionYear = 2023
+            };
+
+            _mockLibraryManager.Setup(m => m.GetItemById(movieId)).Returns(mockMovie);
+
+            // Setup ImageSyncService to throw an exception
+            _mockImageSyncService
+                .Setup(s => s.SyncImages(It.IsAny<BaseItem>(), It.IsAny<string>(), It.IsAny<bool>()))
+                .Throws(new IOException("Simulated disk error"));
+
+            var recommendations = new[]
+            {
+                new ScoredRecommendation(movieId, 0.95f)
+            };
+
+            // Act - Should not throw despite image sync failure
+            var action = () => _manager.SyncRecommendations(userId, recommendations, MediaType.Movie);
+
+            // Assert - .strm file should still be created
+            action.Should().NotThrow();
+
+            var moviePath = _manager.GetUserLibraryPath(userId, MediaType.Movie);
+            var movieFolders = Directory.GetDirectories(moviePath);
+            movieFolders.Should().HaveCount(1);
+
+            var strmFiles = Directory.GetFiles(movieFolders[0], "*.strm");
+            strmFiles.Should().HaveCountGreaterOrEqualTo(1);
+        }
+
+        #endregion
     }
 }

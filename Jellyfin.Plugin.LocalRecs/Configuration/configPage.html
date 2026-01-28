@@ -73,8 +73,26 @@
                             <div class="fieldDescription">Time for watch weight to decay by half (default: 365)</div>
                         </div>
                         
+                        <h2 class="sectionTitle">Image Sync</h2>
+
+                        <div class="checkboxContainer checkboxContainer-withDescription">
+                            <label>
+                                <input is="emby-checkbox" type="checkbox" id="enableImageSync" name="enableImageSync" />
+                                <span>Enable Image Sync</span>
+                            </label>
+                            <div class="fieldDescription checkboxFieldDescription">Copy poster images from source items to recommendation libraries (preserves custom posters)</div>
+                        </div>
+
+                        <div class="checkboxContainer checkboxContainer-withDescription" id="syncBackdropsContainer">
+                            <label>
+                                <input is="emby-checkbox" type="checkbox" id="syncBackdrops" name="syncBackdrops" />
+                                <span>Sync Backdrops</span>
+                            </label>
+                            <div class="fieldDescription checkboxFieldDescription">Also copy backdrop/fanart images (requires Image Sync enabled)</div>
+                        </div>
+
                         <h2 class="sectionTitle">Advanced Features</h2>
-                        
+
                         <div class="checkboxContainer checkboxContainer-withDescription">
                             <label>
                                 <input is="emby-checkbox" type="checkbox" id="enableRatingProximity" name="enableRatingProximity" />
@@ -82,7 +100,7 @@
                             </label>
                             <div class="fieldDescription checkboxFieldDescription">Boost recommendations for items with ratings similar to your viewing history</div>
                         </div>
-                        
+
                         <div class="inputContainer" id="ratingProximityWeightContainer">
                             <label class="inputLabel inputLabelUnfocused" for="ratingProximityWeight">Rating Proximity Weight:</label>
                             <input is="emby-input" type="number" id="ratingProximityWeight" name="ratingProximityWeight" min="0.0" max="1.0" step="0.05" />
@@ -436,7 +454,9 @@
                             page.querySelector('#maxVocabularyTags').value = config.MaxVocabularyTags || 500;
                             page.querySelector('#enableRatingProximity').checked = config.EnableRatingProximity || false;
                             page.querySelector('#ratingProximityWeight').value = config.RatingProximityWeight || 0.2;
-                            
+                            page.querySelector('#enableImageSync').checked = config.EnableImageSync !== false;
+                            page.querySelector('#syncBackdrops').checked = config.SyncBackdrops !== false;
+
                             self.updateFieldVisibility(page);
                             Dashboard.hideLoadingMsg();
                         })
@@ -453,6 +473,10 @@
                     var enableRatingProximity = page.querySelector('#enableRatingProximity').checked;
                     var weightContainer = page.querySelector('#ratingProximityWeightContainer');
                     weightContainer.style.display = enableRatingProximity ? 'block' : 'none';
+
+                    var enableImageSync = page.querySelector('#enableImageSync').checked;
+                    var backdropsContainer = page.querySelector('#syncBackdropsContainer');
+                    backdropsContainer.style.display = enableImageSync ? 'block' : 'none';
                 },
                 
                 /**
@@ -475,7 +499,9 @@
                             config.MaxVocabularyTags = parseInt(page.querySelector('#maxVocabularyTags').value);
                             config.EnableRatingProximity = page.querySelector('#enableRatingProximity').checked;
                             config.RatingProximityWeight = parseFloat(page.querySelector('#ratingProximityWeight').value);
-                            
+                            config.EnableImageSync = page.querySelector('#enableImageSync').checked;
+                            config.SyncBackdrops = page.querySelector('#syncBackdrops').checked;
+
                             return ApiClient.updatePluginConfiguration(self.pluginId, config);
                         })
                         .then(function(result) {
@@ -582,6 +608,10 @@
                 
                 // Setup event listeners for settings
                 page.querySelector('#enableRatingProximity').addEventListener('change', function() {
+                    LocalRecsConfig.updateFieldVisibility(page);
+                });
+
+                page.querySelector('#enableImageSync').addEventListener('change', function() {
                     LocalRecsConfig.updateFieldVisibility(page);
                 });
                 

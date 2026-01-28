@@ -236,3 +236,9 @@ docker-compose.yml
 
 # Agent instructions (local-only)
 AGENTS.md
+
+# Claude Code
+.claude/
+
+# Environment variables (contains credentials)
+.env
