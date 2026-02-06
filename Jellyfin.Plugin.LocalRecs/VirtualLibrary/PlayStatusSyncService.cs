@@ -43,6 +43,12 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
         private readonly ConcurrentDictionary<(Guid UserId, Guid ItemId), byte> _inProgressSyncs;
 
         /// <summary>
+        /// Tracks items with active playback sessions to defer removal until playback stops.
+        /// Key: (UserId, VirtualItemId).
+        /// </summary>
+        private readonly ConcurrentDictionary<(Guid UserId, Guid VirtualItemId), byte> _activePlaybackSessions;
+
+        /// <summary>
         /// Lock for thread-safe queue flushing.
         /// </summary>
         private readonly object _flushLock = new object();
@@ -94,6 +100,9 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
             // Initialize re-entrancy protection
             _inProgressSyncs = new ConcurrentDictionary<(Guid, Guid), byte>();
 
+            // Initialize active playback tracking
+            _activePlaybackSessions = new ConcurrentDictionary<(Guid, Guid), byte>();
+
             // Timer starts on-demand when items are added to queue
             _flushTimer = null;
         }
@@ -140,6 +149,9 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
 
             // Now safe to flush remaining updates (callback is definitely not running)
             FlushQueue();
+
+            // Clear active playback tracking
+            _activePlaybackSessions.Clear();
 
             // Unsubscribe from events
             _userDataManager.UserDataSaved -= OnUserDataSaved;
@@ -572,15 +584,34 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
 
         private void HandleVirtualItemDataChange(Guid userId, BaseItem virtualItem, MediaBrowser.Controller.Entities.UserItemData userData)
         {
-            // AUTO-REMOVAL: If user has started watching (any progress > 0 or any plays), remove the recommendation
-            // This covers both partial playback and completed episodes/movies
-            if (userData.PlaybackPositionTicks > 0 || userData.PlayCount > 0 || userData.Played)
+            var sessionKey = (userId, virtualItem.Id);
+
+            // Check if playback has active position (in-progress playback)
+            if (userData.PlaybackPositionTicks > 0)
+            {
+                // Track this as an active playback session - defer removal
+                if (_activePlaybackSessions.TryAdd(sessionKey, 0))
+                {
+                    _logger.LogInformation(
+                        "User {UserId} started watching recommendation '{ItemName}' (PlaybackPosition={Position}), deferring removal until playback stops",
+                        userId,
+                        virtualItem.Name,
+                        userData.PlaybackPositionTicks);
+                }
+
+                return;
+            }
+
+            // Playback has stopped (position reset to 0) or item is marked as played/has play count
+            // Now it's safe to remove the item from the virtual library
+            // Always clean up session tracking to avoid orphaned entries
+            var hadActiveSession = _activePlaybackSessions.TryRemove(sessionKey, out _);
+            if (userData.Played || userData.PlayCount > 0 || hadActiveSession)
             {
                 _logger.LogInformation(
-                    "User {UserId} started watching recommendation '{ItemName}' (PlaybackPosition={Position}, PlayCount={Count}, Played={Played}), removing from virtual library",
+                    "User {UserId} finished watching recommendation '{ItemName}' (PlayCount={Count}, Played={Played}), removing from virtual library",
                     userId,
                     virtualItem.Name,
-                    userData.PlaybackPositionTicks,
                     userData.PlayCount,
                     userData.Played);
 
@@ -594,8 +625,9 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
 
         private void HandleSourceItemDataChange(Guid userId, BaseItem sourceItem, MediaBrowser.Controller.Entities.UserItemData userData)
         {
-            // If source item has been watched, find and remove corresponding virtual item
-            if (userData.PlaybackPositionTicks > 0 || userData.PlayCount > 0 || userData.Played)
+            // Only remove when playback is complete (Played or has play count with no active position)
+            // Don't remove during active playback (position > 0 without Played flag)
+            if (userData.Played || (userData.PlayCount > 0 && userData.PlaybackPositionTicks == 0))
             {
                 RemoveVirtualItemForSource(userId, sourceItem, userData);
             }

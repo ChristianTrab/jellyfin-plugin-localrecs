@@ -1,9 +1,12 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using Jellyfin.Data.Enums;
 using Jellyfin.Plugin.LocalRecs.Configuration;
 using Jellyfin.Plugin.LocalRecs.Models;
 using Jellyfin.Plugin.LocalRecs.Utilities;
+using MediaBrowser.Controller.Entities;
+using MediaBrowser.Controller.Entities.TV;
 using MediaBrowser.Controller.Library;
 using Microsoft.Extensions.Logging;
 
@@ -108,8 +111,8 @@ namespace Jellyfin.Plugin.LocalRecs.Services
 
         /// <summary>
         /// Gets watch records for a user.
-        /// Only includes items that have been fully watched (Played = true).
-        /// This ensures the taste profile reflects content the user actually consumed.
+        /// For movies, includes items that have been fully watched (Played = true).
+        /// For series, includes items with any watched episodes to capture partial engagement.
         /// </summary>
         /// <param name="userId">The user identifier.</param>
         /// <param name="availableItemIds">Available item IDs (from embeddings).</param>
@@ -142,13 +145,19 @@ namespace Jellyfin.Plugin.LocalRecs.Services
                     continue;
                 }
 
-                // Only include items that are fully watched (Played = true).
-                // For movies, this means the movie was completed.
-                // For series, this means all episodes were watched.
-                // This ensures the taste profile reflects content the user actually consumed,
-                // not partially watched or abandoned content.
-                if (!userData.Played)
+                // For series, userData.Played is unreliable - it only becomes true when ALL
+                // episodes are watched. Instead, check for any watched episodes to include
+                // series the user has actually engaged with in the taste profile.
+                if (item is Series series)
                 {
+                    if (!HasAnyWatchedEpisodes(series, user))
+                    {
+                        continue;
+                    }
+                }
+                else if (!userData.Played)
+                {
+                    // For movies, Played = true means the movie was completed.
                     continue;
                 }
 
@@ -164,6 +173,23 @@ namespace Jellyfin.Plugin.LocalRecs.Services
             }
 
             return records;
+        }
+
+        /// <summary>
+        /// Checks if a series has any watched episodes.
+        /// </summary>
+        private bool HasAnyWatchedEpisodes(Series series, Jellyfin.Database.Implementations.Entities.User user)
+        {
+            var watchedEpisodes = _libraryManager.GetItemList(new InternalItemsQuery(user)
+            {
+                IncludeItemTypes = new[] { BaseItemKind.Episode },
+                AncestorIds = new[] { series.Id },
+                IsPlayed = true,
+                Limit = 1,
+                Recursive = true
+            });
+
+            return watchedEpisodes.Count > 0;
         }
 
         /// <summary>
