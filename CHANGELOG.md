@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.2] - 2026-02-08
+
+### Fixed
+
+- **Playback Freeze from Recommendations (#8)**: Playing items from recommendation libraries no longer freezes playback. The plugin was causing a storm of database writes every ~10 seconds during active playback by syncing every position update to the source library.
+
+### Changed
+
+- **Deferred Removal**: Virtual library items are never removed from event handlers. Watched items remain in recommendation libraries until the next scheduled refresh cleans them up naturally.
+- **SaveReason Filtering**: Only meaningful events (PlaybackFinished, TogglePlayed, UpdateUserRating) trigger play status sync. PlaybackStart and PlaybackProgress events are ignored entirely.
+- **Code Cleanup**: Removed dead removal code (RemoveVirtualLibraryItem, FindSeriesFolderForItem, TriggerLibraryScan, active session tracking).
+
+### Known Issues
+
+- Partially watched recommendations may appear twice in "Continue Watching" / "Next Up" (once for the .strm item, once for the source). Resolves on next recommendation refresh.
+
 ## [0.4.0] - 2025-12-28
 
 ### Added
