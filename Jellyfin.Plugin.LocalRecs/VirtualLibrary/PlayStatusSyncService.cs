@@ -4,7 +4,6 @@ using System.IO;
 using System.Threading;
 using Jellyfin.Database.Implementations.Entities;
 using MediaBrowser.Controller.Entities;
-using MediaBrowser.Controller.Entities.TV;
 using MediaBrowser.Controller.Library;
 using Microsoft.Extensions.Logging;
 
@@ -26,7 +25,7 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
 
         /// <summary>
         /// Normalized base path with forward slashes and trailing separator.
-        /// Cached for performance in path comparison operations.
+        /// Cached for cross-platform path comparison in <see cref="IsVirtualLibraryPath"/>.
         /// </summary>
         private readonly string _normalizedBasePath;
 
@@ -41,12 +40,6 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
         /// Key: (UserId, ItemId).
         /// </summary>
         private readonly ConcurrentDictionary<(Guid UserId, Guid ItemId), byte> _inProgressSyncs;
-
-        /// <summary>
-        /// Tracks items with active playback sessions to defer removal until playback stops.
-        /// Key: (UserId, VirtualItemId).
-        /// </summary>
-        private readonly ConcurrentDictionary<(Guid UserId, Guid VirtualItemId), byte> _activePlaybackSessions;
 
         /// <summary>
         /// Lock for thread-safe queue flushing.
@@ -100,9 +93,6 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
             // Initialize re-entrancy protection
             _inProgressSyncs = new ConcurrentDictionary<(Guid, Guid), byte>();
 
-            // Initialize active playback tracking
-            _activePlaybackSessions = new ConcurrentDictionary<(Guid, Guid), byte>();
-
             // Timer starts on-demand when items are added to queue
             _flushTimer = null;
         }
@@ -149,9 +139,6 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
 
             // Now safe to flush remaining updates (callback is definitely not running)
             FlushQueue();
-
-            // Clear active playback tracking
-            _activePlaybackSessions.Clear();
 
             // Unsubscribe from events
             _userDataManager.UserDataSaved -= OnUserDataSaved;
@@ -314,14 +301,6 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
         }
 
         /// <summary>
-        /// Checks if the given item is in the virtual library.
-        /// </summary>
-        private bool IsVirtualLibraryItem(BaseItem item)
-        {
-            return IsVirtualLibraryPath(item.Path);
-        }
-
-        /// <summary>
         /// Extracts the user ID from a virtual library item path.
         /// Path format: {basePath}/{userId}/{movies|tv}/{item}.
         /// </summary>
@@ -430,7 +409,7 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
                     return;
                 }
 
-                if (!IsVirtualLibraryItem(item))
+                if (!IsVirtualLibraryPath(item.Path))
                 {
                     return;
                 }
@@ -487,11 +466,6 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
             }
         }
 
-        private void FlushQueueCallback(object? state)
-        {
-            FlushQueue();
-        }
-
         private void FlushQueue()
         {
             if (_disposed)
@@ -534,7 +508,7 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
 
                 if (successCount > 0 || failCount > 0)
                 {
-                    _logger.LogInformation(
+                    _logger.LogDebug(
                         "Flushed play status updates: {Success} succeeded, {Failed} failed",
                         successCount,
                         failCount);
@@ -557,135 +531,31 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
         {
             try
             {
+                // Only sync on meaningful state changes, not transient playback updates.
+                // PlaybackStart/PlaybackProgress fire every ~10s during active playback;
+                // syncing each one causes a storm of DB writes that freezes HLS playback.
+                var reason = e.SaveReason;
+                if (reason == MediaBrowser.Model.Entities.UserDataSaveReason.PlaybackStart
+                    || reason == MediaBrowser.Model.Entities.UserDataSaveReason.PlaybackProgress)
+                {
+                    return;
+                }
+
                 var item = e.Item;
                 if (item == null || string.IsNullOrEmpty(item.Path))
                 {
                     return;
                 }
 
-                var userId = e.UserId;
-                var userData = e.UserData;
-
-                // Handle virtual library item changes (sync to source)
-                if (item.Path.EndsWith(".strm", StringComparison.OrdinalIgnoreCase) && IsVirtualLibraryItem(item))
+                // Only handle virtual library .strm items (sync to source)
+                if (item.Path.EndsWith(".strm", StringComparison.OrdinalIgnoreCase) && IsVirtualLibraryPath(item.Path))
                 {
-                    HandleVirtualItemDataChange(userId, item, userData);
-                    return;
+                    QueuePlayStatusUpdate(e.UserId, item, e.UserData);
                 }
-
-                // Handle source library item changes (sync to virtual and check for removal)
-                HandleSourceItemDataChange(userId, item, userData);
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Failed to process user data update for item {ItemId}", e.Item?.Id);
-            }
-        }
-
-        private void HandleVirtualItemDataChange(Guid userId, BaseItem virtualItem, MediaBrowser.Controller.Entities.UserItemData userData)
-        {
-            var sessionKey = (userId, virtualItem.Id);
-
-            // Check if playback has active position (in-progress playback)
-            if (userData.PlaybackPositionTicks > 0)
-            {
-                // Track this as an active playback session - defer removal
-                if (_activePlaybackSessions.TryAdd(sessionKey, 0))
-                {
-                    _logger.LogInformation(
-                        "User {UserId} started watching recommendation '{ItemName}' (PlaybackPosition={Position}), deferring removal until playback stops",
-                        userId,
-                        virtualItem.Name,
-                        userData.PlaybackPositionTicks);
-                }
-
-                return;
-            }
-
-            // Playback has stopped (position reset to 0) or item is marked as played/has play count
-            // Now it's safe to remove the item from the virtual library
-            // Always clean up session tracking to avoid orphaned entries
-            var hadActiveSession = _activePlaybackSessions.TryRemove(sessionKey, out _);
-            if (userData.Played || userData.PlayCount > 0 || hadActiveSession)
-            {
-                _logger.LogInformation(
-                    "User {UserId} finished watching recommendation '{ItemName}' (PlayCount={Count}, Played={Played}), removing from virtual library",
-                    userId,
-                    virtualItem.Name,
-                    userData.PlayCount,
-                    userData.Played);
-
-                RemoveVirtualLibraryItem(userId, virtualItem);
-                return;
-            }
-
-            // If no playback progress, sync normally (for favorites, etc.)
-            QueuePlayStatusUpdate(userId, virtualItem, userData);
-        }
-
-        private void HandleSourceItemDataChange(Guid userId, BaseItem sourceItem, MediaBrowser.Controller.Entities.UserItemData userData)
-        {
-            // Only remove when playback is complete (Played or has play count with no active position)
-            // Don't remove during active playback (position > 0 without Played flag)
-            if (userData.Played || (userData.PlayCount > 0 && userData.PlaybackPositionTicks == 0))
-            {
-                RemoveVirtualItemForSource(userId, sourceItem, userData);
-            }
-        }
-
-        private void RemoveVirtualItemForSource(Guid userId, BaseItem sourceItem, MediaBrowser.Controller.Entities.UserItemData userData)
-        {
-            try
-            {
-                // Find virtual library items that point to this source item
-                var userVirtualLibraryPath = Path.Combine(_virtualLibraryBasePath, userId.ToString());
-                if (!Directory.Exists(userVirtualLibraryPath))
-                {
-                    return;
-                }
-
-                // Search for .strm files that contain this source path
-                var strmFiles = Directory.GetFiles(userVirtualLibraryPath, "*.strm", SearchOption.AllDirectories);
-                foreach (var strmFile in strmFiles)
-                {
-                    try
-                    {
-                        var strmContent = File.ReadAllText(strmFile).Trim();
-                        if (string.IsNullOrEmpty(strmContent))
-                        {
-                            continue;
-                        }
-
-                        // Check if this .strm points to our source item
-                        if (!strmContent.Equals(sourceItem.Path, StringComparison.OrdinalIgnoreCase))
-                        {
-                            continue;
-                        }
-
-                        // Found a virtual item pointing to this source
-                        var virtualItem = _libraryManager.FindByPath(strmFile, isFolder: false);
-                        if (virtualItem != null)
-                        {
-                            _logger.LogInformation(
-                                "User {UserId} watched source item '{SourceName}' (PlaybackPosition={Position}, PlayCount={Count}, Played={Played}), removing corresponding virtual library item",
-                                userId,
-                                sourceItem.Name,
-                                userData.PlaybackPositionTicks,
-                                userData.PlayCount,
-                                userData.Played);
-
-                            RemoveVirtualLibraryItem(userId, virtualItem);
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogWarning(ex, "Failed to check .strm file for source item match: {Path}", strmFile);
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to find virtual items for source item {ItemId}", sourceItem.Id);
             }
         }
 
@@ -709,7 +579,7 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
                 {
                     if (_flushTimer == null)
                     {
-                        _flushTimer = new Timer(FlushQueueCallback, null, 5000, Timeout.Infinite);
+                        _flushTimer = new Timer(_ => FlushQueue(), null, 5000, Timeout.Infinite);
                     }
                     else
                     {
@@ -718,118 +588,6 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
 
                     _timerActive = true;
                 }
-            }
-        }
-
-        /// <summary>
-        /// Removes a virtual library item (recommendation) when user starts watching it.
-        /// For movies, deletes the .strm file. For TV series/episodes, deletes the entire series folder.
-        /// </summary>
-        private void RemoveVirtualLibraryItem(Guid userId, BaseItem virtualItem)
-        {
-            try
-            {
-                // For TV series or episodes, delete the entire series folder
-                if (virtualItem is Series || virtualItem is Episode)
-                {
-                    var seriesFolder = FindSeriesFolderForItem(virtualItem);
-                    if (seriesFolder != null && Directory.Exists(seriesFolder))
-                    {
-                        Directory.Delete(seriesFolder, recursive: true);
-                        _logger.LogInformation(
-                            "Removed recommendation series folder for user {UserId}: {Folder}",
-                            userId,
-                            Path.GetFileName(seriesFolder));
-
-                        TriggerLibraryScan();
-                    }
-                    else
-                    {
-                        _logger.LogWarning(
-                            "Could not find series folder for item {ItemName} (user: {UserId})",
-                            virtualItem.Name,
-                            userId);
-                    }
-                }
-                else
-                {
-                    // For movies, delete the .strm file
-                    var filePath = virtualItem.Path;
-                    if (!string.IsNullOrEmpty(filePath) && File.Exists(filePath))
-                    {
-                        File.Delete(filePath);
-                        _logger.LogInformation(
-                            "Removed recommendation file for user {UserId}: {FileName}",
-                            userId,
-                            Path.GetFileName(filePath));
-
-                        TriggerLibraryScan();
-                    }
-                }
-            }
-            catch (IOException ex)
-            {
-                _logger.LogError(ex, "Failed to remove virtual library item for user {UserId}: {ItemName} (IO error)", userId, virtualItem.Name);
-            }
-            catch (UnauthorizedAccessException ex)
-            {
-                _logger.LogError(ex, "Failed to remove virtual library item for user {UserId}: {ItemName} (access denied)", userId, virtualItem.Name);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to remove virtual library item for user {UserId}: {ItemName}", userId, virtualItem.Name);
-            }
-        }
-
-        /// <summary>
-        /// Finds the series root folder for a TV series or episode item.
-        /// </summary>
-        private string? FindSeriesFolderForItem(BaseItem item)
-        {
-            var itemPath = item.Path;
-            if (string.IsNullOrEmpty(itemPath))
-            {
-                return null;
-            }
-
-            // For Series items, the Path property typically points to the series folder itself
-            if (item is Series && Directory.Exists(itemPath))
-            {
-                return itemPath;
-            }
-
-            // For episodes, navigate up to find the series folder (direct child of /tv/)
-            var dir = Path.GetDirectoryName(itemPath);
-
-            while (!string.IsNullOrEmpty(dir))
-            {
-                var parentDir = Path.GetDirectoryName(dir);
-
-                if (parentDir != null &&
-                    Path.GetFileName(parentDir).Equals("tv", StringComparison.OrdinalIgnoreCase) &&
-                    parentDir.StartsWith(_virtualLibraryBasePath, StringComparison.OrdinalIgnoreCase))
-                {
-                    return dir;
-                }
-
-                dir = parentDir;
-            }
-
-            return null;
-        }
-
-        /// <summary>
-        /// Triggers a library scan to update Jellyfin's database after file deletion.
-        /// </summary>
-        private void TriggerLibraryScan()
-        {
-            try
-            {
-                _libraryManager.ValidateMediaLibrary(new Progress<double>(), CancellationToken.None);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Failed to trigger library scan. Jellyfin will clean up on next scheduled scan.");
             }
         }
 

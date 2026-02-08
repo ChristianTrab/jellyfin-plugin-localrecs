@@ -13,7 +13,7 @@ Please report any issues or feedback on [GitHub Issues](https://github.com/rdpha
 - **Content-based filtering** - TF-IDF embeddings with cosine similarity matching
 - **Temporal similarity** - Decade-based grouping finds content from similar time periods
 - **Virtual library integration** - Works on all Jellyfin clients (web, mobile, Roku, etc.)
-- **Auto-removal** - Recommendations disappear when you start watching them
+- **Play status sync** - Watch state syncs from recommendations back to your real library
 - **Privacy-first** - All processing happens locally on your server
 - **Performance optimized** - Handles 2,000+ item libraries efficiently
 
@@ -81,7 +81,6 @@ Access via: **Dashboard → Plugins → Local Recommendations → Settings**
 
 **Filtering**
 - Exclude abandoned TV series (default: enabled, 90 days threshold)
-- Auto-remove recommendations when user starts watching them
 
 **Weighting Factors**
 - Favorite boost: 2.0x (configurable)
@@ -127,7 +126,8 @@ Recommendations appear as separate libraries for each user:
 - Plugin creates `.strm` files pointing to original media files
 - Admin creates Jellyfin libraries pointing to plugin directories (one-time setup)
 - Each user gets Movies and TV libraries with personalized recommendations
-- Auto-removal: Recommendations disappear when playback starts (prevents duplicate "Continue Watching" entries)
+- Play status sync: Watch state on recommendation items is synced back to the source library
+- Watched items are cleaned up at the next scheduled recommendation refresh
 
 ### Privacy
 
@@ -139,6 +139,7 @@ Recommendations appear as separate libraries for each user:
 
 ## Known Limitations
 
+- **Duplicate "Continue Watching" / "Next Up":** Partially watched recommendations appear twice — once for the `.strm` item and once for the source media file. This resolves on the next recommendation refresh, or you can manually trigger a refresh from Scheduled Tasks.
 - **Metadata display:** Virtual library items may not show full metadata (runtime, ratings, cast) in the UI due to Jellyfin's `.strm` file handling. Playback and posters work normally.
 - **Manual setup required:** Admin must manually create libraries and set permissions (Jellyfin API limitation)
 - **Library scanning:** Manually scan recommendation libraries after refresh to see updates

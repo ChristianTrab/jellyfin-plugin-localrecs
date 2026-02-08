@@ -366,34 +366,31 @@ Movie Title (2020) [tmdbid-12345]/
 - No direct database manipulation required (respects Jellyfin's internal APIs)
 
 #### 8. Play Status Sync Service
-**Purpose:** Auto-remove recommendations when users start watching them, preventing duplicate "Continue Watching" entries.
+**Purpose:** Sync play status from virtual library items to source library items so that watch state is reflected in the real library.
 
 **Problem Solved:**
-- When users start watching a recommendation, both the virtual library item and source library item appear in "Continue Watching"
-- This creates confusion with duplicate entries for the same content
-- Once a user starts watching, the recommendation has served its purpose (discovery)
+- When users mark items as played/favorite in virtual recommendation libraries, the source library should reflect those changes
+- Ensures the next recommendation refresh correctly excludes watched items
 
 **Implementation:**
 - **Event-driven:** Subscribes to `UserDataSaved` events from Jellyfin
-- **Auto-removal on watch:** When playback position > 0, immediately removes the virtual library .strm file
-- **Debounced queue:** 5-second debounce for non-removal operations (favorites, etc.)
-- **Re-entrancy protection:** Prevents infinite loops when operations trigger additional events
+- **SaveReason filtering:** Only processes meaningful state changes (`PlaybackFinished`, `TogglePlayed`, `UpdateUserRating`, `Import`, `UpdateUserData`). Ignores `PlaybackStart` and `PlaybackProgress` events to avoid a storm of database writes during active playback.
+- **Debounced queue:** 5-second debounce to coalesce rapid state changes
+- **Re-entrancy protection:** Prevents infinite loops when `SaveUserData` triggers additional `UserDataSaved` events
 - **Thread-safe disposal:** Uses `ManualResetEvent` to ensure clean shutdown
 
-**Auto-Removal Mechanism:**
-1. User starts watching item in virtual library (any playback progress > 0)
-2. Event handler detects playback progress
-3. Service immediately removes virtual library .strm file (movies) or entire series folder (TV)
-4. Triggers library scan to update Jellyfin's database
-5. Only source library item remains with watch status
-6. Source item appears in "Continue Watching" without duplicate
+**Sync Flow:**
+1. User finishes watching or toggles played/favorite on a virtual library item
+2. `OnUserDataSaved` fires with a non-transient `SaveReason`
+3. Item is queued for sync (debounced, keyed by user+item to coalesce duplicates)
+4. After 5s, `FlushQueue` reads the `.strm` file to find the source item path
+5. Play status (Played, PlayCount, PlaybackPositionTicks, LastPlayedDate, IsFavorite) is copied from virtual item to source item
 
-**Removal Criteria:**
-- **Threshold:** Any playback progress (PlaybackPositionTicks > 0)
-- **Movies:** Deletes individual .strm file
-- **TV Series:** Deletes entire series folder on first episode watch
-- **Automatic:** No configuration needed, always enabled
-- **Re-recommendation:** Items can reappear in future recommendations if user marks as unwatched
+**Deferred Removal:**
+- Virtual library items are **never removed by event handlers**
+- Watched items remain in recommendation libraries until the next scheduled refresh
+- The refresh task does a full clear-and-rebuild via `VirtualLibraryManager.SyncRecommendations()`, which naturally excludes watched items
+- This avoids playback crashes caused by removing items mid-playback (see Known Limitations)
 
 **Lifecycle:**
 - Initialized eagerly during plugin startup via `VirtualLibraryInitializer` dependency injection
@@ -477,10 +474,10 @@ Movie Title (2020) [tmdbid-12345]/
 6. Recommendation Refresh Service logs completion
 7. Users manually scan recommendation libraries (or wait for scheduled scan) to see updated recommendations
 
-**Auto-Removal During Usage:**
-- When user starts watching a recommendation (any playback > 0), PlayStatusSyncService immediately removes the virtual library item
-- This prevents duplicate "Continue Watching" entries
-- Items can reappear in future recommendation refreshes if user marks as unwatched
+**Play Status Sync During Usage:**
+- When a user finishes watching or toggles played/favorite on a virtual library item, PlayStatusSyncService syncs the state to the source library item
+- Transient playback events (start, progress) are ignored to avoid database write storms
+- Watched items remain in the recommendation library until the next scheduled refresh naturally excludes them
 
 **Note:** Embeddings are computed fresh on every refresh to ensure recommendations always reflect the current watch history. No caching is performed.
 
@@ -572,6 +569,23 @@ All settings exposed via plugin configuration UI and stored in Jellyfin's plugin
 - Custom posters and backdrops are preserved in recommendation libraries
 - Full metadata is visible once playback begins (from the source item)
 - This is a cosmetic limitation that doesn't affect recommendation quality or playback
+
+### Duplicate "Continue Watching" / "Next Up" Entries
+
+**Limitation:** Partially watched recommendations appear twice in "Continue Watching" (movies) or "Next Up" (TV series) — once for the virtual `.strm` item and once for the source media file.
+
+**Why this happens:**
+- The virtual `.strm` file and the source media file are separate items in Jellyfin's database
+- Both accumulate independent playback position when watched
+- PlayStatusSyncService syncs the final state (Played, PlayCount, etc.) from virtual to source, but Jellyfin tracks playback position on both items during active playback
+- Removing the virtual item mid-playback causes crashes (Jellyfin loses the active stream reference), so removal is deferred to the next recommendation refresh
+
+**When it resolves:**
+- On the next scheduled recommendation refresh, `SyncRecommendations()` does a full clear-and-rebuild that excludes watched/in-progress items
+- If the user finishes watching (Played=true), the item won't appear in the next refresh's recommendations
+
+**Workaround:**
+- Users can manually trigger "Refresh Local Recommendations" from Scheduled Tasks to clear watched items sooner
 
 ### Other Limitations
 
