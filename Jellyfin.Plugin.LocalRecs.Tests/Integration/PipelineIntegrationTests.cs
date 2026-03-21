@@ -665,13 +665,14 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Integration
             List<MediaItemMetadata> library)
         {
             var watchedItemIds = watchHistory.Select(w => w.Item.Id).ToHashSet();
+            var allBaseItems = new List<BaseItem>();
 
             foreach (var item in library)
             {
-                // Create a minimal mock BaseItem - we can't mock Id since it's not virtual
-                // So we return any BaseItem and match on it being called with that item ID
                 var mockItem = new Mock<BaseItem>();
+                mockItem.Object.Id = item.Id;
                 _mockLibraryManager.Setup(m => m.GetItemById(item.Id)).Returns(mockItem.Object);
+                allBaseItems.Add(mockItem.Object);
 
                 var watch = watchHistory.FirstOrDefault(w => w.Item.Id == item.Id);
                 if (watchedItemIds.Contains(item.Id))
@@ -703,6 +704,10 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Integration
                         .Returns(userData);
                 }
             }
+
+            // Setup user-scoped library access: all items are accessible by default
+            _mockLibraryManager.Setup(m => m.GetItemList(It.IsAny<InternalItemsQuery>()))
+                .Returns(allBaseItems);
         }
 
         private List<MediaItemMetadata> GenerateScalableLibrary(int count)

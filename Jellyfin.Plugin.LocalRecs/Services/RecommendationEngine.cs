@@ -158,8 +158,32 @@ namespace Jellyfin.Plugin.LocalRecs.Services
         }
 
         /// <summary>
+        /// Gets the set of item IDs that a user has access to based on their library permissions.
+        /// Uses Jellyfin's built-in user-scoped query which respects library access settings.
+        /// </summary>
+        /// <param name="user">The Jellyfin user.</param>
+        /// <returns>HashSet of accessible item IDs.</returns>
+        private HashSet<Guid> GetUserAccessibleItemIds(Jellyfin.Database.Implementations.Entities.User user)
+        {
+            var accessibleItems = _libraryManager.GetItemList(new InternalItemsQuery(user)
+            {
+                IncludeItemTypes = new[] { BaseItemKind.Movie, BaseItemKind.Series },
+                IsVirtualItem = false,
+                Recursive = true
+            });
+
+            if (accessibleItems == null)
+            {
+                return new HashSet<Guid>();
+            }
+
+            return accessibleItems.Select(i => i.Id).ToHashSet();
+        }
+
+        /// <summary>
         /// Gets unwatched candidate items for a user.
-        /// Excludes fully watched items and optionally partially watched series.
+        /// Excludes fully watched items, optionally partially watched series,
+        /// and items from libraries the user cannot access.
         /// </summary>
         /// <param name="userId">The user identifier.</param>
         /// <param name="availableItemIds">Available item IDs from embeddings.</param>
@@ -181,6 +205,13 @@ namespace Jellyfin.Plugin.LocalRecs.Services
                 return new List<Guid>();
             }
 
+            // Get items accessible to this user based on library permissions
+            var accessibleItemIds = GetUserAccessibleItemIds(user);
+            _logger.LogDebug(
+                "User {UserId} has access to {Count} items",
+                userId,
+                accessibleItemIds.Count);
+
             var candidates = new List<Guid>();
 
             foreach (var itemId in availableItemIds)
@@ -193,6 +224,12 @@ namespace Jellyfin.Plugin.LocalRecs.Services
 
                 // Filter by media type if specified
                 if (mediaType.HasValue && itemMetadata.Type != mediaType.Value)
+                {
+                    continue;
+                }
+
+                // Exclude items from libraries the user cannot access
+                if (!accessibleItemIds.Contains(itemId))
                 {
                     continue;
                 }
@@ -370,14 +407,23 @@ namespace Jellyfin.Plugin.LocalRecs.Services
                 candidateMetadata = candidateMetadata.Where(m => m.Type == mediaType.Value);
             }
 
-            // Get unwatched items
+            // Get unwatched items that the user has access to
             var user = _userManager.GetUserById(userId);
             var unwatchedCandidates = new List<MediaItemMetadata>();
 
             if (user != null)
             {
+                // Filter to items from libraries the user can access
+                var accessibleItemIds = GetUserAccessibleItemIds(user);
+
                 foreach (var item in candidateMetadata)
                 {
+                    // Exclude items from inaccessible libraries
+                    if (!accessibleItemIds.Contains(item.Id))
+                    {
+                        continue;
+                    }
+
                     var libraryItem = _libraryManager.GetItemById(item.Id);
                     if (libraryItem == null)
                     {

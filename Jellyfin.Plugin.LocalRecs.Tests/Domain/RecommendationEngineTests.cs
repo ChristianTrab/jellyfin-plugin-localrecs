@@ -29,6 +29,7 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Domain
         private readonly PluginConfiguration _config;
         private readonly Guid _testUserId;
         private readonly User _testUser;
+        private readonly List<BaseItem> _registeredItems = new List<BaseItem>();
 
         public RecommendationEngineTests()
         {
@@ -50,6 +51,10 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Domain
             };
 
             _mockUserManager.Setup(m => m.GetUserById(_testUserId)).Returns(_testUser);
+
+            // Default: all registered items are accessible (tests override via SetupUserVisibleItems)
+            _mockLibraryManager.Setup(m => m.GetItemList(It.IsAny<InternalItemsQuery>()))
+                .Returns(() => _registeredItems);
         }
 
         [Fact]
@@ -596,7 +601,9 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Domain
         private void SetupWatchedItem(MediaItemMetadata item)
         {
             var mockItem = new Mock<BaseItem>();
+            mockItem.Object.Id = item.Id;
             _mockLibraryManager.Setup(m => m.GetItemById(item.Id)).Returns(mockItem.Object);
+            _registeredItems.Add(mockItem.Object);
 
             var userData = new UserItemData
             {
@@ -610,7 +617,9 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Domain
         private void SetupUnwatchedItem(MediaItemMetadata item)
         {
             var mockItem = new Mock<BaseItem>();
+            mockItem.Object.Id = item.Id;
             _mockLibraryManager.Setup(m => m.GetItemById(item.Id)).Returns(mockItem.Object);
+            _registeredItems.Add(mockItem.Object);
 
             var userData = new UserItemData
             {
@@ -625,7 +634,9 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Domain
         private void SetupPartiallyWatchedItem(MediaItemMetadata item, long playbackPositionTicks)
         {
             var mockItem = new Mock<BaseItem>();
+            mockItem.Object.Id = item.Id;
             _mockLibraryManager.Setup(m => m.GetItemById(item.Id)).Returns(mockItem.Object);
+            _registeredItems.Add(mockItem.Object);
 
             var userData = new UserItemData
             {
@@ -636,5 +647,171 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Domain
             _mockUserDataManager.Setup(m => m.GetUserData(_testUser, mockItem.Object))
                 .Returns(userData);
         }
+
+        /// <summary>
+        /// Sets up the user-scoped GetItemList mock to return only the specified items
+        /// as "visible" to the user (simulating library access permissions).
+        /// </summary>
+        private void SetupUserVisibleItems(IEnumerable<MediaItemMetadata> visibleItems)
+        {
+            var baseItems = new List<BaseItem>();
+
+            foreach (var item in visibleItems)
+            {
+                var mockItem = new Mock<BaseItem>();
+                mockItem.Object.Id = item.Id;
+                baseItems.Add(mockItem.Object);
+            }
+
+            // When GetItemList is called with any query (user-scoped), return only visible items
+            _mockLibraryManager.Setup(m => m.GetItemList(It.IsAny<InternalItemsQuery>()))
+                .Returns(baseItems);
+        }
+
+        #region Library Access Filtering Tests
+
+        [Fact]
+        public void GenerateRecommendations_ExcludesItemsFromInaccessibleLibraries()
+        {
+            // Arrange
+            var library = TestMediaLibrary.CreateTestMovies();
+            var embeddings = CreateEmbeddings(library);
+            var metadata = library.ToDictionary(i => i.Id, i => i);
+
+            // First 7 items are accessible, last 3 are in a disabled library
+            var accessibleItems = library.Take(7).ToList();
+            var inaccessibleItems = library.Skip(7).ToList();
+            var inaccessibleIds = inaccessibleItems.Select(i => i.Id).ToHashSet();
+
+            // Setup user-visible items (only accessible ones returned by user-scoped query)
+            SetupUserVisibleItems(accessibleItems);
+
+            // User watched 3 accessible items
+            var watchedMovies = accessibleItems.Take(3).ToList();
+            foreach (var movie in watchedMovies)
+            {
+                SetupWatchedItem(movie);
+            }
+
+            // Rest of accessible items are unwatched
+            foreach (var movie in accessibleItems.Skip(3))
+            {
+                SetupUnwatchedItem(movie);
+            }
+
+            // Inaccessible items are also unwatched (would be recommended without the fix)
+            foreach (var movie in inaccessibleItems)
+            {
+                SetupUnwatchedItem(movie);
+            }
+
+            var userProfile = CreateGenericUserProfile(embeddings, watchedMovies.Select(m => m.Id));
+
+            // Act
+            var recommendations = _engine.GenerateRecommendations(
+                _testUserId,
+                userProfile,
+                embeddings,
+                metadata,
+                _config,
+                maxResults: 10);
+
+            // Assert
+            recommendations.Should().NotBeEmpty("accessible unwatched items exist");
+
+            foreach (var rec in recommendations)
+            {
+                inaccessibleIds.Should().NotContain(rec.ItemId,
+                    "items from inaccessible libraries should be excluded from recommendations");
+            }
+        }
+
+        [Fact]
+        public void GenerateRecommendations_ColdStart_ExcludesItemsFromInaccessibleLibraries()
+        {
+            // Arrange
+            var library = TestMediaLibrary.CreateTestMovies();
+            var embeddings = CreateEmbeddings(library);
+            var metadata = library.ToDictionary(i => i.Id, i => i);
+
+            // First 7 items are accessible, last 3 are in a disabled library
+            var accessibleItems = library.Take(7).ToList();
+            var inaccessibleItems = library.Skip(7).ToList();
+            var inaccessibleIds = inaccessibleItems.Select(i => i.Id).ToHashSet();
+
+            // Setup user-visible items
+            SetupUserVisibleItems(accessibleItems);
+
+            // All items are unwatched (cold start - null profile)
+            foreach (var item in library)
+            {
+                SetupUnwatchedItem(item);
+            }
+
+            UserProfile? userProfile = null;
+
+            // Act
+            var recommendations = _engine.GenerateRecommendations(
+                _testUserId,
+                userProfile,
+                embeddings,
+                metadata,
+                _config,
+                maxResults: 10);
+
+            // Assert
+            recommendations.Should().NotBeEmpty("accessible items exist");
+
+            foreach (var rec in recommendations)
+            {
+                inaccessibleIds.Should().NotContain(rec.ItemId,
+                    "items from inaccessible libraries should be excluded from cold-start recommendations");
+            }
+        }
+
+        [Fact]
+        public void GenerateRecommendations_AllLibrariesAccessible_ReturnsAllEligibleItems()
+        {
+            // Arrange
+            var library = TestMediaLibrary.CreateTestMovies();
+            var embeddings = CreateEmbeddings(library);
+            var metadata = library.ToDictionary(i => i.Id, i => i);
+
+            // ALL items are accessible
+            SetupUserVisibleItems(library);
+
+            // User watched 3 items
+            var watchedMovies = library.Take(3).ToList();
+            foreach (var movie in watchedMovies)
+            {
+                SetupWatchedItem(movie);
+            }
+
+            // Rest are unwatched
+            var unwatchedMovies = library.Skip(3).ToList();
+            foreach (var movie in unwatchedMovies)
+            {
+                SetupUnwatchedItem(movie);
+            }
+
+            var userProfile = CreateGenericUserProfile(embeddings, watchedMovies.Select(m => m.Id));
+
+            // Act
+            var recommendations = _engine.GenerateRecommendations(
+                _testUserId,
+                userProfile,
+                embeddings,
+                metadata,
+                _config,
+                maxResults: 10);
+
+            // Assert - should have recommendations from the full unwatched pool
+            recommendations.Should().NotBeEmpty();
+            recommendations.Should().HaveCountGreaterThanOrEqualTo(
+                Math.Min(unwatchedMovies.Count, 10),
+                "all items are accessible so all eligible items should be candidates");
+        }
+
+        #endregion
     }
 }
