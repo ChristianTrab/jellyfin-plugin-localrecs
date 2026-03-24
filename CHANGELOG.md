@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.3] - 2026-03-23
+
+### Fixed
+
+- **User Library Access Filtering (#10)**: Recommendations now respect per-user library access. Items from libraries a user cannot access (including disabled libraries) are excluded from both personalized and cold-start recommendation paths.
+
 ## [0.5.2] - 2026-02-08
 
 ### Fixed

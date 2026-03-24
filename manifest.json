@@ -8,6 +8,14 @@
     "category": "General",
     "versions": [
       {
+        "version": "0.5.3.0",
+        "changelog": "Filter recommendations by user library access (#10)\n- Items from libraries a user cannot access are excluded from recommendations\n- Applies to both personalized and cold-start recommendation paths\n- Respects per-user library permissions including disabled libraries",
+        "targetAbi": "10.11.0.0",
+        "sourceUrl": "https://github.com/rdpharr/jellyfin-plugin-localrecs/releases/download/v0.5.3/jellyfin-plugin-localrecs-v0.5.3.zip",
+        "checksum": "970ba6e9e74b0c8c92da9d18e296b602",
+        "timestamp": "2026-03-23T00:00:00Z"
+      },
+      {
         "version": "0.5.2.0",
         "changelog": "Fix playback freeze when playing from recommendation libraries (#8)\n- Never remove virtual library items from event handlers (deferred to next refresh)\n- Ignore PlaybackStart/PlaybackProgress events to prevent DB write storms during playback\n- Only sync play status on meaningful events (PlaybackFinished, TogglePlayed, etc.)\n- Known tradeoff: partially watched items may appear in Continue Watching twice until next refresh",
         "targetAbi": "10.11.0.0",
