@@ -92,8 +92,12 @@ Access via: **Dashboard → Plugins → Local Recommendations → Settings**
 - Decade-based temporal similarity (finds content from similar eras)
 
 **Performance**
-- Vocabulary limits for actors/tags (default: 500 each)
+- Vocabulary limits for actors/tags (default: 500 each) — see note below
 - Parallel processing options
+
+**Vocabulary size** controls how many distinct actors, directors, and tags are included in the TF-IDF model. A higher value (e.g. 1000) captures more niche contributors and gives richer signals for large, varied libraries. A lower value (e.g. 200) is faster and uses less memory but may miss less-common cast members. The default of 500 is a good starting point for most libraries; raise it if recommendations feel too genre-driven and ignore specific actors you watch often.
+
+**Recency decay** controls how much your recent watch history influences recommendations relative to older watches. It is expressed as a half-life in days: a value of 365 means a film watched a year ago contributes half as much to your taste profile as one watched today. Lower values (e.g. 90) make recommendations react quickly to recent binges; higher values (e.g. 730) give a more stable, long-term taste profile.
 
 **Update Schedule**
 - Default: Daily at 4:00 AM

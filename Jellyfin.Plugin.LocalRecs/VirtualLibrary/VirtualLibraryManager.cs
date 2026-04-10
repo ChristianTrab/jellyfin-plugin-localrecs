@@ -219,7 +219,7 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
 
                     if (string.IsNullOrEmpty(item.Path))
                     {
-                        _logger.LogWarning("Item {ItemId} ({ItemName}) has no path, skipping .strm creation", rec.ItemId, item.Name);
+                        _logger.LogDebug("Item {ItemId} ({ItemName}) has no path, skipping .strm creation", rec.ItemId, item.Name);
                         continue;
                     }
 
@@ -557,7 +557,7 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
                     {
                         if (string.IsNullOrEmpty(episode.Path))
                         {
-                            _logger.LogWarning("Episode {EpisodeName} has no path, skipping", episode.Name);
+                            _logger.LogDebug("Episode {EpisodeName} has no path, skipping", episode.Name);
                             continue;
                         }
 
