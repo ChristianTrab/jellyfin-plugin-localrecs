@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-04-15
+
+### Changed
+
+- **Virtual libraries now use filesystem symlinks instead of `.strm` files (#13)**. Fixes transcoded playback on Jellyfin 10.11.7+, which silently rejects local paths in `.strm` files as part of security advisory [GHSA-j2hf-x4q5-47j3](https://github.com/jellyfin/jellyfin/security/advisories/GHSA-j2hf-x4q5-47j3). Symlinks have the source file's real extension, so Jellyfin's media pipeline treats them as regular media — transcoding, probing, and artwork discovery all work natively.
+- **Artwork is now symlinked from the source folder** (`poster.jpg`, `fanart.jpg`, etc.) instead of being copied. Custom artwork on source items propagates automatically.
+- **Trailer discovery delegated to Jellyfin.** Plugin symlinks trailer files by name; Jellyfin's scanner handles the rest.
+
+### Removed
+
+- **`ImageSyncService`** and its associated configuration (`EnableImageSync`, `SyncBackdrops`). Symlinked artwork supersedes the copy-based approach.
+- **Custom trailer scanning logic** (~65 lines) and the video-extension heuristic.
+
+### Fixed
+
+- **`tvshow.nfo` written for series folders** so Jellyfin's scanner reliably identifies them as Series instead of rendering individual episodes as standalone items.
+- **Series poster rendering**: artwork now resolved via `BaseItem.GetImagePath` (which works for metadata-cache storage) rather than scanning the source folder.
+- **Additional artwork aliases** (`folder.jpg`, `backdrop.jpg`) symlinked alongside `poster.jpg`/`fanart.jpg` to suppress Jellyfin core warnings for conventional filenames it probes.
+- **Reduced log noise**: per-user/per-item progress messages demoted from INFO to DEBUG. Refresh-level summary lines remain at INFO.
+
+### Upgrade Notes
+
+- **Linux / Docker-on-Linux:** No action required. Virtual libraries regenerate on the next scheduled refresh.
+- **Windows hosts:** Jellyfin must run as Administrator **or** Windows Developer Mode must be enabled (Settings → Privacy & security → For developers). Without one of these, the plugin logs `Access denied creating symlink` and the virtual libraries remain empty. See README Troubleshooting section.
+- Existing `.strm`-based virtual libraries are cleared and rebuilt on the next recommendation refresh — no manual migration needed.
+
 ## [0.5.3] - 2026-03-23
 
 ### Fixed

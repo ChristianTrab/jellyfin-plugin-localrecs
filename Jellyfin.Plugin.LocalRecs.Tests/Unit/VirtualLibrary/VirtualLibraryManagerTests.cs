@@ -1,9 +1,9 @@
 using System;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
 using FluentAssertions;
 using Jellyfin.Plugin.LocalRecs.Models;
-using Jellyfin.Plugin.LocalRecs.Services;
 using Jellyfin.Plugin.LocalRecs.VirtualLibrary;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Entities.Movies;
@@ -15,53 +15,97 @@ using Xunit;
 namespace Jellyfin.Plugin.LocalRecs.Tests.Unit.VirtualLibrary
 {
     /// <summary>
-    /// Tests for VirtualLibraryManager file operations.
+    /// Tests for VirtualLibraryManager symlink-based virtual library creation.
+    /// Symlink creation on Windows requires Developer Mode or Administrator — tests
+    /// that exercise real symlinks are gated on that capability.
     /// </summary>
     public class VirtualLibraryManagerTests : IDisposable
     {
         private readonly string _testBasePath;
+        private readonly string _sourceMediaDir;
+        private readonly string _sourceMediaFile;
         private readonly VirtualLibraryManager _manager;
         private readonly Mock<ILibraryManager> _mockLibraryManager;
-        private readonly Mock<IImageSyncService> _mockImageSyncService;
 
         public VirtualLibraryManagerTests()
         {
-            // Create a temp directory for testing
             _testBasePath = Path.Combine(Path.GetTempPath(), "jellyfin-localrecs-tests", Guid.NewGuid().ToString());
             Directory.CreateDirectory(_testBasePath);
 
+            // Real source file so File.CreateSymbolicLink has something to point at
+            _sourceMediaDir = Path.Combine(_testBasePath, "source", "TestMovie");
+            Directory.CreateDirectory(_sourceMediaDir);
+            _sourceMediaFile = Path.Combine(_sourceMediaDir, "TestMovie.mkv");
+            File.WriteAllText(_sourceMediaFile, "fake mkv content");
+
             _mockLibraryManager = new Mock<ILibraryManager>();
-            _mockImageSyncService = new Mock<IImageSyncService>();
 
             _manager = new VirtualLibraryManager(
                 NullLogger<VirtualLibraryManager>.Instance,
                 _mockLibraryManager.Object,
-                _mockImageSyncService.Object,
                 _testBasePath);
         }
 
         public void Dispose()
         {
-            // Cleanup test directory
             if (Directory.Exists(_testBasePath))
             {
-                Directory.Delete(_testBasePath, recursive: true);
+                try
+                {
+                    Directory.Delete(_testBasePath, recursive: true);
+                }
+                catch
+                {
+                    // Best effort cleanup
+                }
             }
 
             GC.SuppressFinalize(this);
         }
 
+        private static bool CanCreateSymlinks()
+        {
+            // Attempt to create a test symlink; if it fails (e.g. Windows without
+            // Developer Mode), skip tests that require real symlinks.
+            var probe = Path.Combine(Path.GetTempPath(), "jf-localrecs-symlink-probe-" + Guid.NewGuid());
+            var target = Path.Combine(Path.GetTempPath(), "jf-localrecs-symlink-target-" + Guid.NewGuid());
+            try
+            {
+                File.WriteAllText(target, "x");
+                File.CreateSymbolicLink(probe, target);
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+            finally
+            {
+                try
+                {
+                    if (File.Exists(probe))
+                    {
+                        File.Delete(probe);
+                    }
+
+                    if (File.Exists(target))
+                    {
+                        File.Delete(target);
+                    }
+                }
+                catch
+                {
+                    // Best effort cleanup
+                }
+            }
+        }
+
         [Fact]
         public void EnsureUserDirectoriesExist_CreatesMovieAndTvDirectories()
         {
-            // Arrange
             var userId = Guid.NewGuid();
-            var username = "TestUser";
+            var result = _manager.EnsureUserDirectoriesExist(userId, "TestUser");
 
-            // Act
-            var result = _manager.EnsureUserDirectoriesExist(userId, username);
-
-            // Assert
             result.Should().BeTrue();
             Directory.Exists(Path.Combine(_testBasePath, userId.ToString(), "movies")).Should().BeTrue();
             Directory.Exists(Path.Combine(_testBasePath, userId.ToString(), "tv")).Should().BeTrue();
@@ -70,35 +114,27 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Unit.VirtualLibrary
         [Fact]
         public void GetUserLibraryPath_ReturnsCorrectMoviePath()
         {
-            // Arrange
             var userId = Guid.NewGuid();
-            _manager.EnsureUserDirectoriesExist(userId, "TestUser");
-
-            // Act
             var path = _manager.GetUserLibraryPath(userId, MediaType.Movie);
-
-            // Assert
             path.Should().Be(Path.Combine(_testBasePath, userId.ToString(), "movies"));
         }
 
         [Fact]
         public void GetUserLibraryPath_ReturnsCorrectTvPath()
         {
-            // Arrange
             var userId = Guid.NewGuid();
-            _manager.EnsureUserDirectoriesExist(userId, "TestUser");
-
-            // Act
             var path = _manager.GetUserLibraryPath(userId, MediaType.Series);
-
-            // Assert
             path.Should().Be(Path.Combine(_testBasePath, userId.ToString(), "tv"));
         }
 
         [Fact]
-        public void SyncRecommendations_CreatesStrmFileForMovie()
+        public void SyncRecommendations_CreatesSymlinkToSourceMedia()
         {
-            // Arrange
+            if (!CanCreateSymlinks())
+            {
+                return;
+            }
+
             var userId = Guid.NewGuid();
             _manager.EnsureUserDirectoriesExist(userId, "TestUser");
 
@@ -107,134 +143,179 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Unit.VirtualLibrary
             {
                 Id = movieId,
                 Name = "Test Movie",
-                Path = "/media/movies/TestMovie.mkv",
+                Path = _sourceMediaFile,
                 ProductionYear = 2023
             };
 
             _mockLibraryManager.Setup(m => m.GetItemById(movieId)).Returns(mockMovie);
 
-            var recommendations = new[]
-            {
-                new ScoredRecommendation(movieId, 0.95f)
-            };
-
-            // Act
+            var recommendations = new[] { new ScoredRecommendation(movieId, 0.95f) };
             _manager.SyncRecommendations(userId, recommendations, MediaType.Movie);
 
-            // Assert - Movies are now in folders with .strm and optional trailer files
             var moviePath = _manager.GetUserLibraryPath(userId, MediaType.Movie);
             var movieFolders = Directory.GetDirectories(moviePath);
             movieFolders.Should().HaveCount(1);
 
-            // Check for .strm file inside the movie folder
-            var strmFiles = Directory.GetFiles(movieFolders[0], "*.strm");
-            strmFiles.Should().HaveCountGreaterOrEqualTo(1);
+            var mediaLinks = Directory.GetFiles(movieFolders[0], "*.mkv");
+            mediaLinks.Should().HaveCount(1);
 
-            // Check the main .strm file content (not the trailer)
-            var mainStrmFile = strmFiles.First(f => !f.Contains("-trailer"));
-            var strmContent = File.ReadAllText(mainStrmFile);
-            strmContent.Should().Be("/media/movies/TestMovie.mkv");
+            // Confirm it's actually a symlink pointing at the source
+            var info = new FileInfo(mediaLinks[0]);
+            info.LinkTarget.Should().NotBeNull();
+            var target = info.ResolveLinkTarget(returnFinalTarget: true);
+            target!.FullName.Should().Be(new FileInfo(_sourceMediaFile).FullName);
+        }
+
+        [Fact]
+        public void SyncRecommendations_PreservesSourceFileExtension()
+        {
+            if (!CanCreateSymlinks())
+            {
+                return;
+            }
+
+            var userId = Guid.NewGuid();
+            _manager.EnsureUserDirectoriesExist(userId, "TestUser");
+
+            var mp4Source = Path.Combine(_sourceMediaDir, "Other.mp4");
+            File.WriteAllText(mp4Source, "fake mp4");
+
+            var movieId = Guid.NewGuid();
+            var mockMovie = new Movie
+            {
+                Id = movieId,
+                Name = "Other Movie",
+                Path = mp4Source,
+                ProductionYear = 2024
+            };
+
+            _mockLibraryManager.Setup(m => m.GetItemById(movieId)).Returns(mockMovie);
+
+            _manager.SyncRecommendations(
+                userId,
+                new[] { new ScoredRecommendation(movieId, 0.9f) },
+                MediaType.Movie);
+
+            var moviePath = _manager.GetUserLibraryPath(userId, MediaType.Movie);
+            var folder = Directory.GetDirectories(moviePath).Single();
+            Directory.GetFiles(folder, "*.mp4").Should().HaveCount(1);
+            Directory.GetFiles(folder, "*.strm").Should().BeEmpty();
+        }
+
+        [Fact]
+        public void SyncRecommendations_SymlinksArtworkFromSourceFolder()
+        {
+            if (!CanCreateSymlinks())
+            {
+                return;
+            }
+
+            var userId = Guid.NewGuid();
+            _manager.EnsureUserDirectoriesExist(userId, "TestUser");
+
+            // Drop artwork in source folder
+            File.WriteAllText(Path.Combine(_sourceMediaDir, "poster.jpg"), "fake poster");
+            File.WriteAllText(Path.Combine(_sourceMediaDir, "fanart.jpg"), "fake fanart");
+
+            var movieId = Guid.NewGuid();
+            var mockMovie = new Movie
+            {
+                Id = movieId,
+                Name = "Art Movie",
+                Path = _sourceMediaFile,
+                ProductionYear = 2023
+            };
+
+            _mockLibraryManager.Setup(m => m.GetItemById(movieId)).Returns(mockMovie);
+
+            _manager.SyncRecommendations(
+                userId,
+                new[] { new ScoredRecommendation(movieId, 0.9f) },
+                MediaType.Movie);
+
+            var folder = Directory.GetDirectories(_manager.GetUserLibraryPath(userId, MediaType.Movie)).Single();
+            File.Exists(Path.Combine(folder, "poster.jpg")).Should().BeTrue();
+            File.Exists(Path.Combine(folder, "fanart.jpg")).Should().BeTrue();
+            new FileInfo(Path.Combine(folder, "poster.jpg")).LinkTarget.Should().NotBeNull();
         }
 
         [Fact]
         public void SyncRecommendations_ClearsOldRecommendationsBeforeCreatingNew()
         {
-            // Arrange
+            if (!CanCreateSymlinks())
+            {
+                return;
+            }
+
             var userId = Guid.NewGuid();
             _manager.EnsureUserDirectoriesExist(userId, "TestUser");
+
+            var movie1Source = Path.Combine(_sourceMediaDir, "Movie1.mkv");
+            var movie2Source = Path.Combine(_sourceMediaDir, "Movie2.mkv");
+            File.WriteAllText(movie1Source, "x");
+            File.WriteAllText(movie2Source, "x");
 
             var movieId1 = Guid.NewGuid();
             var movieId2 = Guid.NewGuid();
 
-            var mockMovie1 = new Movie
+            _mockLibraryManager.Setup(m => m.GetItemById(movieId1)).Returns(new Movie
             {
                 Id = movieId1,
                 Name = "Movie 1",
-                Path = "/media/movies/Movie1.mkv",
+                Path = movie1Source,
                 ProductionYear = 2023
-            };
-
-            var mockMovie2 = new Movie
+            });
+            _mockLibraryManager.Setup(m => m.GetItemById(movieId2)).Returns(new Movie
             {
                 Id = movieId2,
                 Name = "Movie 2",
-                Path = "/media/movies/Movie2.mkv",
+                Path = movie2Source,
                 ProductionYear = 2024
-            };
+            });
 
-            _mockLibraryManager.Setup(m => m.GetItemById(movieId1)).Returns(mockMovie1);
-            _mockLibraryManager.Setup(m => m.GetItemById(movieId2)).Returns(mockMovie2);
+            _manager.SyncRecommendations(userId, new[] { new ScoredRecommendation(movieId1, 0.95f) }, MediaType.Movie);
+            _manager.SyncRecommendations(userId, new[] { new ScoredRecommendation(movieId2, 0.90f) }, MediaType.Movie);
 
-            // First sync
-            var firstRecommendations = new[]
-            {
-                new ScoredRecommendation(movieId1, 0.95f)
-            };
-            _manager.SyncRecommendations(userId, firstRecommendations, MediaType.Movie);
-
-            // Act - Second sync with different recommendations
-            var secondRecommendations = new[]
-            {
-                new ScoredRecommendation(movieId2, 0.90f)
-            };
-            _manager.SyncRecommendations(userId, secondRecommendations, MediaType.Movie);
-
-            // Assert - Should only have Movie 2 folder, not Movie 1
             var moviePath = _manager.GetUserLibraryPath(userId, MediaType.Movie);
             var movieFolders = Directory.GetDirectories(moviePath);
             movieFolders.Should().HaveCount(1);
-
-            // Check the folder name contains Movie 2
             movieFolders[0].Should().Contain("Movie 2");
-
-            // Check the main .strm file content
-            var strmFiles = Directory.GetFiles(movieFolders[0], "*.strm")
-                .Where(f => !f.Contains("-trailer")).ToArray();
-            strmFiles.Should().HaveCount(1);
-
-            var strmContent = File.ReadAllText(strmFiles[0]);
-            strmContent.Should().Be("/media/movies/Movie2.mkv");
         }
 
         [Fact]
         public void DeleteUserDirectories_RemovesUserDirectory()
         {
-            // Arrange
             var userId = Guid.NewGuid();
             _manager.EnsureUserDirectoriesExist(userId, "TestUser");
 
             var userDir = Path.Combine(_testBasePath, userId.ToString());
             Directory.Exists(userDir).Should().BeTrue();
 
-            // Act
             _manager.DeleteUserDirectories(userId);
-
-            // Assert
             Directory.Exists(userDir).Should().BeFalse();
         }
 
         [Fact]
         public void SyncRecommendations_HandlesEmptyRecommendationsList()
         {
-            // Arrange
             var userId = Guid.NewGuid();
             _manager.EnsureUserDirectoriesExist(userId, "TestUser");
 
-            // Act
             _manager.SyncRecommendations(userId, Array.Empty<ScoredRecommendation>(), MediaType.Movie);
 
-            // Assert - Directory should exist but be empty
             var moviePath = _manager.GetUserLibraryPath(userId, MediaType.Movie);
             Directory.Exists(moviePath).Should().BeTrue();
-            var strmFiles = Directory.GetFiles(moviePath, "*.strm");
-            strmFiles.Should().BeEmpty();
+            Directory.GetFileSystemEntries(moviePath).Should().BeEmpty();
         }
 
         [Fact]
-        public void SanitizeFilename_RemovesInvalidCharacters()
+        public void SanitizeFilename_RemovesInvalidCharactersFromFolderName()
         {
-            // This is a white-box test - we can't directly call SanitizeFilename,
-            // but we can verify it works through a movie with special characters in the name
+            if (!CanCreateSymlinks())
+            {
+                return;
+            }
+
             var userId = Guid.NewGuid();
             _manager.EnsureUserDirectoriesExist(userId, "TestUser");
 
@@ -243,188 +324,23 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Unit.VirtualLibrary
             {
                 Id = movieId,
                 Name = "Test: Movie / With \\ Special | Characters",
-                Path = "/media/movies/TestMovie.mkv",
+                Path = _sourceMediaFile,
                 ProductionYear = 2023
             };
 
             _mockLibraryManager.Setup(m => m.GetItemById(movieId)).Returns(mockMovie);
 
-            var recommendations = new[]
-            {
-                new ScoredRecommendation(movieId, 0.95f)
-            };
+            _manager.SyncRecommendations(
+                userId,
+                new[] { new ScoredRecommendation(movieId, 0.95f) },
+                MediaType.Movie);
 
-            // Act
-            _manager.SyncRecommendations(userId, recommendations, MediaType.Movie);
-
-            // Assert - Should create a folder without invalid characters
-            var moviePath = _manager.GetUserLibraryPath(userId, MediaType.Movie);
-            var movieFolders = Directory.GetDirectories(moviePath);
+            var movieFolders = Directory.GetDirectories(_manager.GetUserLibraryPath(userId, MediaType.Movie));
             movieFolders.Should().HaveCount(1);
 
-            // Folder name should not contain invalid characters
             var folderName = Path.GetFileName(movieFolders[0]);
             folderName.Should().NotContain(":");
-            folderName.Should().NotContain("/");
-            folderName.Should().NotContain("\\");
             folderName.Should().NotContain("|");
-
-            // .strm file should exist inside the folder
-            var strmFiles = Directory.GetFiles(movieFolders[0], "*.strm")
-                .Where(f => !f.Contains("-trailer")).ToArray();
-            strmFiles.Should().HaveCount(1);
         }
-
-        #region Image Sync Integration Tests
-
-        [Fact]
-        public void SyncRecommendations_CallsImageSyncService_WhenImageSyncEnabled()
-        {
-            // Arrange
-            var userId = Guid.NewGuid();
-            _manager.EnsureUserDirectoriesExist(userId, "TestUser");
-
-            var movieId = Guid.NewGuid();
-            var mockMovie = new Movie
-            {
-                Id = movieId,
-                Name = "Test Movie",
-                Path = "/media/movies/TestMovie.mkv",
-                ProductionYear = 2023
-            };
-
-            _mockLibraryManager.Setup(m => m.GetItemById(movieId)).Returns(mockMovie);
-
-            var recommendations = new[]
-            {
-                new ScoredRecommendation(movieId, 0.95f)
-            };
-
-            // Act
-            _manager.SyncRecommendations(userId, recommendations, MediaType.Movie);
-
-            // Assert - ImageSyncService.SyncImages should have been called
-            // Note: Plugin.Instance is null in tests, so config defaults to EnableImageSync=true
-            _mockImageSyncService.Verify(
-                s => s.SyncImages(
-                    It.IsAny<BaseItem>(),
-                    It.IsAny<string>(),
-                    It.IsAny<bool>()),
-                Times.Once);
-        }
-
-        [Fact]
-        public void SyncRecommendations_CallsImageSyncServiceWithCorrectItem()
-        {
-            // Arrange
-            var userId = Guid.NewGuid();
-            _manager.EnsureUserDirectoriesExist(userId, "TestUser");
-
-            var movieId = Guid.NewGuid();
-            var mockMovie = new Movie
-            {
-                Id = movieId,
-                Name = "Specific Test Movie",
-                Path = "/media/movies/SpecificTestMovie.mkv",
-                ProductionYear = 2023
-            };
-
-            _mockLibraryManager.Setup(m => m.GetItemById(movieId)).Returns(mockMovie);
-
-            var recommendations = new[]
-            {
-                new ScoredRecommendation(movieId, 0.95f)
-            };
-
-            // Act
-            _manager.SyncRecommendations(userId, recommendations, MediaType.Movie);
-
-            // Assert - Verify the correct item was passed to SyncImages
-            _mockImageSyncService.Verify(
-                s => s.SyncImages(
-                    It.Is<BaseItem>(item => item.Id == movieId && item.Name == "Specific Test Movie"),
-                    It.IsAny<string>(),
-                    It.IsAny<bool>()),
-                Times.Once);
-        }
-
-        [Fact]
-        public void SyncRecommendations_CallsImageSyncServiceForEachMovie()
-        {
-            // Arrange
-            var userId = Guid.NewGuid();
-            _manager.EnsureUserDirectoriesExist(userId, "TestUser");
-
-            var movieId1 = Guid.NewGuid();
-            var movieId2 = Guid.NewGuid();
-            var movieId3 = Guid.NewGuid();
-
-            var mockMovie1 = new Movie { Id = movieId1, Name = "Movie 1", Path = "/media/movies/Movie1.mkv", ProductionYear = 2023 };
-            var mockMovie2 = new Movie { Id = movieId2, Name = "Movie 2", Path = "/media/movies/Movie2.mkv", ProductionYear = 2023 };
-            var mockMovie3 = new Movie { Id = movieId3, Name = "Movie 3", Path = "/media/movies/Movie3.mkv", ProductionYear = 2023 };
-
-            _mockLibraryManager.Setup(m => m.GetItemById(movieId1)).Returns(mockMovie1);
-            _mockLibraryManager.Setup(m => m.GetItemById(movieId2)).Returns(mockMovie2);
-            _mockLibraryManager.Setup(m => m.GetItemById(movieId3)).Returns(mockMovie3);
-
-            var recommendations = new[]
-            {
-                new ScoredRecommendation(movieId1, 0.95f),
-                new ScoredRecommendation(movieId2, 0.90f),
-                new ScoredRecommendation(movieId3, 0.85f)
-            };
-
-            // Act
-            _manager.SyncRecommendations(userId, recommendations, MediaType.Movie);
-
-            // Assert - ImageSyncService.SyncImages should have been called 3 times
-            _mockImageSyncService.Verify(
-                s => s.SyncImages(It.IsAny<BaseItem>(), It.IsAny<string>(), It.IsAny<bool>()),
-                Times.Exactly(3));
-        }
-
-        [Fact]
-        public void SyncRecommendations_ImageSyncFailure_DoesNotFailStrmCreation()
-        {
-            // Arrange
-            var userId = Guid.NewGuid();
-            _manager.EnsureUserDirectoriesExist(userId, "TestUser");
-
-            var movieId = Guid.NewGuid();
-            var mockMovie = new Movie
-            {
-                Id = movieId,
-                Name = "Test Movie",
-                Path = "/media/movies/TestMovie.mkv",
-                ProductionYear = 2023
-            };
-
-            _mockLibraryManager.Setup(m => m.GetItemById(movieId)).Returns(mockMovie);
-
-            // Setup ImageSyncService to throw an exception
-            _mockImageSyncService
-                .Setup(s => s.SyncImages(It.IsAny<BaseItem>(), It.IsAny<string>(), It.IsAny<bool>()))
-                .Throws(new IOException("Simulated disk error"));
-
-            var recommendations = new[]
-            {
-                new ScoredRecommendation(movieId, 0.95f)
-            };
-
-            // Act - Should not throw despite image sync failure
-            var action = () => _manager.SyncRecommendations(userId, recommendations, MediaType.Movie);
-
-            // Assert - .strm file should still be created
-            action.Should().NotThrow();
-
-            var moviePath = _manager.GetUserLibraryPath(userId, MediaType.Movie);
-            var movieFolders = Directory.GetDirectories(moviePath);
-            movieFolders.Should().HaveCount(1);
-
-            var strmFiles = Directory.GetFiles(movieFolders[0], "*.strm");
-            strmFiles.Should().HaveCountGreaterOrEqualTo(1);
-        }
-
-        #endregion
     }
 }

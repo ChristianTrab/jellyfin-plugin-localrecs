@@ -135,10 +135,8 @@ namespace Jellyfin.Plugin.LocalRecs.ScheduledTasks
                 progress?.Report(90);
 
                 // Step 4: Wait for file system to flush, then trigger library scan (90-95% progress)
-                _logger.LogInformation("Waiting for file system flush before triggering library scan");
+                _logger.LogDebug("Waiting for file system flush before triggering library scan");
                 await Task.Delay(TimeSpan.FromSeconds(2), cancellationToken).ConfigureAwait(false);
-
-                _logger.LogInformation("Triggering library scan for virtual recommendation libraries");
 
                 LogLibraryScanInstructions();
 
@@ -189,14 +187,7 @@ namespace Jellyfin.Plugin.LocalRecs.ScheduledTasks
 
         private void LogLibraryScanInstructions()
         {
-            // DON'T trigger automatic library scan - let user manually scan or wait for scheduled scan
-            // The issue is that ValidateMediaLibrary() removes .strm files before metadata is fetched
-            // Manual scan or scheduled scan works correctly because Jellyfin has time to process the files
-            _logger.LogInformation("Virtual library files updated successfully");
-            _logger.LogInformation("IMPORTANT: Please manually scan the recommendation libraries via:");
-            _logger.LogInformation("  Dashboard → Libraries → [Your Recommendation Library] → Scan Library");
-            _logger.LogInformation("  OR wait for the next scheduled library scan");
-            _logger.LogInformation("Automatic scanning is disabled to prevent .strm file removal issues");
+            _logger.LogInformation("Virtual library files updated. Scan recommendation libraries manually or wait for the next scheduled scan to see updates.");
         }
     }
 }

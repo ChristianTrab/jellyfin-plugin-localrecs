@@ -59,7 +59,7 @@ namespace Jellyfin.Plugin.LocalRecs.Services
             var metadata = library.ToDictionary(m => m.Id);
 
             // Always compute fresh embeddings to reflect current watch history
-            _logger.LogInformation("Computing fresh embeddings for {Count} items", library.Count);
+            _logger.LogDebug("Computing fresh embeddings for {Count} items", library.Count);
 
             var config = Plugin.Instance?.Configuration ?? new Configuration.PluginConfiguration();
 
@@ -117,7 +117,7 @@ namespace Jellyfin.Plugin.LocalRecs.Services
                     MediaType.Series,
                     config.TvRecommendationCount);
 
-                _logger.LogInformation(
+                _logger.LogDebug(
                     "Generated recommendations for user {UserId}: {MovieCount} movies, {TvCount} TV",
                     userId,
                     movieRecs.Count,

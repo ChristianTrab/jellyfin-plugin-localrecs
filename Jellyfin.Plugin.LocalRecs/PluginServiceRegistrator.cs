@@ -35,10 +35,6 @@ namespace Jellyfin.Plugin.LocalRecs
             // Phase 6: Recommendation Refresh Service
             serviceCollection.AddSingleton<RecommendationRefreshService>();
 
-            // Phase 6.5: Image Sync Service
-            serviceCollection.AddSingleton<IImagePathProvider, ImagePathProvider>();
-            serviceCollection.AddSingleton<IImageSyncService, ImageSyncService>();
-
             // Phase 7: Virtual Library Services
             // Use lazy initialization to ensure Plugin.Instance is available
             serviceCollection.AddSingleton(sp =>
@@ -47,7 +43,6 @@ namespace Jellyfin.Plugin.LocalRecs
                 return new VirtualLibraryManager(
                     sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<VirtualLibraryManager>>(),
                     sp.GetRequiredService<MediaBrowser.Controller.Library.ILibraryManager>(),
-                    sp.GetRequiredService<IImageSyncService>(),
                     virtualLibraryBasePath);
             });
 

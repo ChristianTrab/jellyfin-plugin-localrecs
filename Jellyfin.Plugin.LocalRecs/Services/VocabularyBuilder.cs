@@ -49,7 +49,7 @@ namespace Jellyfin.Plugin.LocalRecs.Services
                 return new FeatureVocabulary();
             }
 
-            _logger.LogInformation("Building vocabulary from {Count} items", itemList.Count);
+            _logger.LogDebug("Building vocabulary from {Count} items", itemList.Count);
 
             var vocabulary = new FeatureVocabulary();
 
@@ -132,7 +132,7 @@ namespace Jellyfin.Plugin.LocalRecs.Services
             // Set metadata
             vocabulary.TotalItems = itemList.Count;
 
-            _logger.LogInformation(
+            _logger.LogDebug(
                 "Built vocabulary: {GenreCount} genres, {ActorCount} actors, {DirectorCount} directors, {TagCount} tags, {DecadeCount} decades",
                 vocabulary.Genres.Count,
                 vocabulary.Actors.Count,

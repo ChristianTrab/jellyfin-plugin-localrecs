@@ -91,7 +91,7 @@ namespace Jellyfin.Plugin.LocalRecs.Services
                 throw new ArgumentException("Metadata dictionary cannot be empty", nameof(metadata));
             }
 
-            _logger.LogInformation(
+            _logger.LogDebug(
                 "Generating recommendations for user {UserId}, mediaType: {MediaType}, max: {MaxResults}",
                 userId,
                 mediaType?.ToString() ?? "All",
@@ -100,7 +100,7 @@ namespace Jellyfin.Plugin.LocalRecs.Services
             // Check for cold-start scenario
             if (userProfile == null || userProfile.WatchedItemCount < config.MinWatchedItemsForPersonalization)
             {
-                _logger.LogInformation(
+                _logger.LogDebug(
                     "Cold-start scenario for user {UserId}: {WatchedCount} watched items (min: {MinRequired})",
                     userId,
                     userProfile?.WatchedItemCount ?? 0,
@@ -118,7 +118,7 @@ namespace Jellyfin.Plugin.LocalRecs.Services
                 return new List<ScoredRecommendation>();
             }
 
-            _logger.LogInformation(
+            _logger.LogDebug(
                 "Found {CandidateCount} unwatched candidates for user {UserId}",
                 candidates.Count,
                 userId);
@@ -149,7 +149,7 @@ namespace Jellyfin.Plugin.LocalRecs.Services
                 .Take(maxResults)
                 .ToList();
 
-            _logger.LogInformation(
+            _logger.LogDebug(
                 "Generated {RecommendationCount} recommendations for user {UserId}",
                 recommendations.Count,
                 userId);
@@ -395,7 +395,7 @@ namespace Jellyfin.Plugin.LocalRecs.Services
             LocalMediaType? mediaType,
             int maxResults)
         {
-            _logger.LogInformation(
+            _logger.LogDebug(
                 "Generating cold-start recommendations for user {UserId}",
                 userId);
 
@@ -453,7 +453,7 @@ namespace Jellyfin.Plugin.LocalRecs.Services
                 .Select(m => new ScoredRecommendation(m.Id, (m.CommunityRating ?? 0) / 10.0f))
                 .ToList();
 
-            _logger.LogInformation(
+            _logger.LogDebug(
                 "Generated {Count} cold-start recommendations for user {UserId}",
                 topRated.Count,
                 userId);

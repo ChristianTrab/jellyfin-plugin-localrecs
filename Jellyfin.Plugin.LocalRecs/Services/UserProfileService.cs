@@ -71,7 +71,7 @@ namespace Jellyfin.Plugin.LocalRecs.Services
                 throw new ArgumentException("Embeddings dictionary cannot be empty", nameof(embeddings));
             }
 
-            _logger.LogInformation("Building user profile for user {UserId}", userId);
+            _logger.LogDebug("Building user profile for user {UserId}", userId);
 
             // Get watch records for this user
             var watchRecords = GetWatchRecords(userId, embeddings.Keys);
@@ -82,7 +82,7 @@ namespace Jellyfin.Plugin.LocalRecs.Services
                 return null; // Return null to trigger cold-start recommendations
             }
 
-            _logger.LogInformation("Found {Count} watched items for user {UserId}", watchRecords.Count, userId);
+            _logger.LogDebug("Found {Count} watched items for user {UserId}", watchRecords.Count, userId);
 
             // Compute weighted taste vector
             var tasteVector = ComputeTasteVector(watchRecords, embeddings, config);
@@ -99,7 +99,7 @@ namespace Jellyfin.Plugin.LocalRecs.Services
                 CriticRatingStdDev = criticStdDev
             };
 
-            _logger.LogInformation(
+            _logger.LogDebug(
                 "Built profile for user {UserId}: {Count} items, AvgCommunity={AvgCommunity:F2}, AvgCritic={AvgCritic:F2}",
                 userId,
                 watchRecords.Count,

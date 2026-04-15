@@ -45,7 +45,7 @@ namespace Jellyfin.Plugin.LocalRecs.Services
             }
 
             var itemList = items.ToList();
-            _logger.LogInformation("Computing embeddings for {Count} items", itemList.Count);
+            _logger.LogDebug("Computing embeddings for {Count} items", itemList.Count);
 
             var embeddings = new Dictionary<Guid, ItemEmbedding>();
 
@@ -57,14 +57,14 @@ namespace Jellyfin.Plugin.LocalRecs.Services
 
             if (embeddings.Count > 0)
             {
-                _logger.LogInformation(
+                _logger.LogDebug(
                     "Computed {Count} embeddings (dimension: {Dim})",
                     embeddings.Count,
                     embeddings.Values.First().Vector.Length);
             }
             else
             {
-                _logger.LogInformation("No embeddings computed (0 items provided)");
+                _logger.LogDebug("No embeddings computed (0 items provided)");
             }
 
             return embeddings;

@@ -3,31 +3,31 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using Jellyfin.Plugin.LocalRecs.Configuration;
+using System.Text;
 using Jellyfin.Plugin.LocalRecs.Models;
-using Jellyfin.Plugin.LocalRecs.Services;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Entities.TV;
 using MediaBrowser.Controller.Library;
+using MediaBrowser.Model.Entities;
 using Microsoft.Extensions.Logging;
 using BaseItemKind = Jellyfin.Data.Enums.BaseItemKind;
 
 namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
 {
     /// <summary>
-    /// Manages virtual library .strm files for per-user recommendations.
-    /// Creates and maintains .strm files in per-user directories that point to original media files.
+    /// Manages virtual library symlinks for per-user recommendations.
+    /// Creates filesystem symlinks in per-user directories that point to original media files.
+    /// Symlinks replace the prior .strm approach, which broke in Jellyfin 10.11.7 when
+    /// the server stopped accepting local paths in .strm files (security fix GHSA-j2hf-x4q5-47j3).
     /// </summary>
     public class VirtualLibraryManager
     {
+        private static readonly string[] TrailerSuffixes = { "-trailer", ".trailer", "_trailer" };
+
         private readonly ILogger<VirtualLibraryManager> _logger;
         private readonly ILibraryManager _libraryManager;
-        private readonly IImageSyncService _imageSyncService;
         private readonly string _virtualLibraryBasePath;
 
-        /// <summary>
-        /// Lock object for thread-safe file operations per user.
-        /// </summary>
         private readonly ConcurrentDictionary<Guid, object> _userLocks = new ConcurrentDictionary<Guid, object>();
 
         /// <summary>
@@ -35,18 +35,14 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
         /// </summary>
         /// <param name="logger">Logger instance.</param>
         /// <param name="libraryManager">Library manager for media access.</param>
-        /// <param name="imageSyncService">Image sync service for copying images.</param>
         /// <param name="virtualLibraryBasePath">Base path for virtual libraries.</param>
-        /// <exception cref="ArgumentNullException">Thrown when any parameter is null.</exception>
         public VirtualLibraryManager(
             ILogger<VirtualLibraryManager> logger,
             ILibraryManager libraryManager,
-            IImageSyncService imageSyncService,
             string virtualLibraryBasePath)
         {
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _libraryManager = libraryManager ?? throw new ArgumentNullException(nameof(libraryManager));
-            _imageSyncService = imageSyncService ?? throw new ArgumentNullException(nameof(imageSyncService));
             _virtualLibraryBasePath = virtualLibraryBasePath ?? throw new ArgumentNullException(nameof(virtualLibraryBasePath));
         }
 
@@ -64,7 +60,6 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
 
         /// <summary>
         /// Ensures the virtual library directories exist for a user.
-        /// Creates both movies and tv subdirectories.
         /// </summary>
         /// <param name="userId">User ID.</param>
         /// <param name="username">Username for logging purposes.</param>
@@ -75,11 +70,8 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
 
             try
             {
-                var moviePath = GetUserLibraryPath(userId, MediaType.Movie);
-                var tvPath = GetUserLibraryPath(userId, MediaType.Series);
-
-                Directory.CreateDirectory(moviePath);
-                Directory.CreateDirectory(tvPath);
+                Directory.CreateDirectory(GetUserLibraryPath(userId, MediaType.Movie));
+                Directory.CreateDirectory(GetUserLibraryPath(userId, MediaType.Series));
 
                 _logger.LogDebug(
                     "Ensured virtual library directories exist for user {Username} ({UserId})",
@@ -113,10 +105,6 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
 
             if (!Directory.Exists(userPath))
             {
-                _logger.LogDebug(
-                    "No virtual library directory found for user {Username} ({UserId})",
-                    displayName,
-                    userId);
                 return true;
             }
 
@@ -139,22 +127,15 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
                 _logger.LogError(ex, "Access denied deleting directories for user {Username} ({UserId})", displayName, userId);
                 return false;
             }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Unexpected error deleting directories for user {Username} ({UserId})", displayName, userId);
-                return false;
-            }
         }
 
         /// <summary>
-        /// Updates recommendations by clearing all existing .strm files and creating new ones.
-        /// This ensures recommendations always match the latest generation without sync issues.
-        /// This method is thread-safe per user.
+        /// Clears and recreates recommendations for a user. Thread-safe per user.
         /// </summary>
         /// <param name="userId">User ID.</param>
         /// <param name="recommendations">List of recommended items.</param>
         /// <param name="mediaType">Media type (Movie or Series).</param>
-        /// <returns>Number of files created.</returns>
+        /// <returns>Number of items created.</returns>
         /// <exception cref="ArgumentNullException">Thrown when recommendations is null.</exception>
         public int SyncRecommendations(
             Guid userId,
@@ -166,29 +147,11 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
                 throw new ArgumentNullException(nameof(recommendations));
             }
 
-            // Get or create lock for this user
             var userLock = _userLocks.GetOrAdd(userId, _ => new object());
-
             lock (userLock)
             {
                 return SyncRecommendationsInternal(userId, recommendations, mediaType);
             }
-        }
-
-        /// <summary>
-        /// Checks if a file is a video file based on extension.
-        /// </summary>
-        /// <param name="filePath">Path to check.</param>
-        /// <returns>True if the file has a video extension.</returns>
-        private static bool IsVideoFile(string filePath)
-        {
-            var videoExtensions = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-            {
-                ".mp4", ".mkv", ".avi", ".mov", ".wmv", ".m4v", ".webm", ".flv", ".ts", ".m2ts", ".mpg", ".mpeg"
-            };
-
-            var extension = Path.GetExtension(filePath);
-            return videoExtensions.Contains(extension);
         }
 
         private int SyncRecommendationsInternal(
@@ -198,13 +161,9 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
         {
             var libraryPath = GetUserLibraryPath(userId, mediaType);
 
-            // Step 1: Clear all existing files/folders
             ClearRecommendationsInternal(userId, mediaType);
-
-            // Step 2: Ensure directory exists (may have been deleted in clear)
             Directory.CreateDirectory(libraryPath);
 
-            // Step 3: Create new files for all recommendations
             var createdCount = 0;
             foreach (var rec in recommendations)
             {
@@ -219,29 +178,37 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
 
                     if (string.IsNullOrEmpty(item.Path))
                     {
-                        _logger.LogDebug("Item {ItemId} ({ItemName}) has no path, skipping .strm creation", rec.ItemId, item.Name);
+                        _logger.LogDebug("Item {ItemId} ({ItemName}) has no path, skipping", rec.ItemId, item.Name);
                         continue;
                     }
 
-                    CreateStrmFile(libraryPath, item);
+                    if (item is Series series)
+                    {
+                        CreateSeriesStructure(libraryPath, series);
+                    }
+                    else
+                    {
+                        CreateMovieFolderStructure(libraryPath, item);
+                    }
+
                     createdCount++;
-                }
-                catch (IOException ex)
-                {
-                    _logger.LogError(ex, "Failed to create .strm file for item {ItemId} (IO error)", rec.ItemId);
                 }
                 catch (UnauthorizedAccessException ex)
                 {
-                    _logger.LogError(ex, "Failed to create .strm file for item {ItemId} (access denied)", rec.ItemId);
+                    LogSymlinkPermissionError(ex, rec.ItemId);
+                }
+                catch (IOException ex)
+                {
+                    _logger.LogError(ex, "Failed to create virtual library entry for item {ItemId} (IO error)", rec.ItemId);
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError(ex, "Failed to create .strm file for item {ItemId}", rec.ItemId);
+                    _logger.LogError(ex, "Failed to create virtual library entry for item {ItemId}", rec.ItemId);
                 }
             }
 
-            _logger.LogInformation(
-                "Updated {MediaType} recommendations for user {UserId}: {Created} files created",
+            _logger.LogDebug(
+                "Updated {MediaType} recommendations for user {UserId}: {Created} items created",
                 mediaType,
                 userId,
                 createdCount);
@@ -260,236 +227,330 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
 
             try
             {
-                // Delete the entire directory and recreate it for a clean slate
-                _logger.LogDebug("Deleting entire virtual library directory: {Path}", libraryPath);
                 Directory.Delete(libraryPath, recursive: true);
-
-                _logger.LogInformation(
-                    "Cleared all {MediaType} items for user {UserId} (deleted directory)",
+                _logger.LogDebug(
+                    "Cleared all {MediaType} items for user {UserId}",
                     mediaType,
                     userId);
             }
             catch (IOException ex)
             {
                 _logger.LogError(ex, "Failed to delete virtual library directory (IO error): {Path}", libraryPath);
-
-                // Fallback to individual file/folder deletion
-                FallbackClearRecommendations(userId, mediaType, libraryPath);
             }
             catch (UnauthorizedAccessException ex)
             {
                 _logger.LogError(ex, "Failed to delete virtual library directory (access denied): {Path}", libraryPath);
-
-                // Fallback to individual file/folder deletion
-                FallbackClearRecommendations(userId, mediaType, libraryPath);
-            }
-        }
-
-        private void FallbackClearRecommendations(Guid userId, MediaType mediaType, string libraryPath)
-        {
-            _logger.LogWarning("Falling back to individual file deletion for {Path}", libraryPath);
-
-            var deletedCount = 0;
-
-            // Delete all subfolders (movie folders for movies, series folders for TV)
-            // Both movies and series now use folder structures
-            var folders = GetExistingSeriesFolders(libraryPath);
-            foreach (var folder in folders)
-            {
-                try
-                {
-                    Directory.Delete(folder, recursive: true);
-                    deletedCount++;
-                }
-                catch (IOException ex)
-                {
-                    _logger.LogError(ex, "Failed to delete folder (IO error): {Folder}", folder);
-                }
-                catch (UnauthorizedAccessException ex)
-                {
-                    _logger.LogError(ex, "Failed to delete folder (access denied): {Folder}", folder);
-                }
-            }
-
-            // Delete any loose .strm files (stragglers from old format)
-            var files = GetExistingStrmFiles(libraryPath);
-            foreach (var file in files)
-            {
-                try
-                {
-                    File.Delete(file);
-                    deletedCount++;
-                }
-                catch (IOException ex)
-                {
-                    _logger.LogError(ex, "Failed to delete .strm file (IO error): {File}", file);
-                }
-                catch (UnauthorizedAccessException ex)
-                {
-                    _logger.LogError(ex, "Failed to delete .strm file (access denied): {File}", file);
-                }
-            }
-
-            _logger.LogInformation(
-                "Cleared {Count} {MediaType} items for user {UserId} (fallback method)",
-                deletedCount,
-                mediaType,
-                userId);
-        }
-
-        private void CreateStrmFile(string libraryPath, BaseItem item)
-        {
-            // For TV series, create a folder structure with episode .strm files
-            if (item is Series series)
-            {
-                CreateSeriesStrmStructure(libraryPath, series);
-            }
-            else
-            {
-                // For movies, create a folder with .strm and trailer files
-                CreateMovieFolderStructure(libraryPath, item);
             }
         }
 
         private void CreateMovieFolderStructure(string libraryPath, BaseItem item)
         {
-            // Create movie folder: "Movie Name (Year) [tmdbid-123]"
+            if (string.IsNullOrEmpty(item.Path))
+            {
+                return;
+            }
+
             var folderName = GenerateFolderName(item);
             var movieFolderPath = Path.Combine(libraryPath, folderName);
+            Directory.CreateDirectory(movieFolderPath);
 
-            try
-            {
-                Directory.CreateDirectory(movieFolderPath);
+            var extension = Path.GetExtension(item.Path);
+            var mediaLinkPath = Path.Combine(movieFolderPath, folderName + extension);
+            CreateSymlink(mediaLinkPath, item.Path);
 
-                // Generate base filename (without extension)
-                var baseFilename = folderName;
+            var sourceDir = Path.GetDirectoryName(item.Path);
+            var trailerCount = LinkTrailers(movieFolderPath, folderName, sourceDir);
+            var artworkCount = LinkItemArtwork(movieFolderPath, item);
 
-                // 1. Create the main .strm file
-                var strmPath = Path.Combine(movieFolderPath, baseFilename + ".strm");
-                File.WriteAllText(strmPath, item.Path ?? string.Empty);
-
-                // 2. Create trailer .strm files if the source has local trailers
-                var trailerCount = CreateTrailerStrmFiles(movieFolderPath, baseFilename, item);
-
-                // 3. Sync images from source item (poster, backdrop)
-                var config = Plugin.Instance?.Configuration ?? new PluginConfiguration();
-                if (config.EnableImageSync)
-                {
-                    _imageSyncService.SyncImages(item, movieFolderPath, config.SyncBackdrops);
-                }
-
-                _logger.LogDebug(
-                    "Created movie folder: {FolderName} with .strm and {TrailerCount} trailer(s)",
-                    folderName,
-                    trailerCount);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to create movie folder structure for {MovieName}", item.Name);
-                throw;
-            }
+            _logger.LogDebug(
+                "Created movie folder: {FolderName} with symlink, {TrailerCount} trailer(s), {ArtworkCount} artwork file(s)",
+                folderName,
+                trailerCount,
+                artworkCount);
         }
 
-        /// <summary>
-        /// Creates .strm files for local trailers using the -trailer suffix.
-        /// </summary>
-        /// <param name="folderPath">Path to the folder where trailer files will be created.</param>
-        /// <param name="baseFilename">Base filename for the trailers (without extension).</param>
-        /// <param name="item">The media item to find trailers for.</param>
-        /// <returns>Number of trailer files created.</returns>
-        private int CreateTrailerStrmFiles(string folderPath, string baseFilename, BaseItem item)
+        private void CreateSeriesStructure(string libraryPath, Series series)
         {
-            var trailerPaths = GetLocalTrailerPaths(item);
-            if (trailerPaths.Count == 0)
+            var seriesFolderName = GenerateFolderName(series);
+            var seriesPath = Path.Combine(libraryPath, seriesFolderName);
+            Directory.CreateDirectory(seriesPath);
+
+            // Series-level artwork: use ImageInfos (images may live in metadata cache, not on disk
+            // next to episodes) so Jellyfin can render series tiles. Also write a minimal
+            // tvshow.nfo so the library scanner reliably identifies this folder as a series
+            // instead of treating its episodes as standalone items.
+            var seriesSourceDir = series.Path;
+            var trailerCount = LinkTrailers(seriesPath, seriesFolderName, seriesSourceDir);
+            var artworkCount = LinkItemArtwork(seriesPath, series);
+            WriteTvShowNfo(seriesPath, series);
+
+            var episodes = _libraryManager.GetItemList(new InternalItemsQuery
             {
-                return 0;
+                ParentId = series.Id,
+                IncludeItemTypes = new[] { BaseItemKind.Episode },
+                Recursive = true
+            })
+            .OfType<Episode>()
+            .OrderBy(e => e.ParentIndexNumber ?? 0)
+            .ThenBy(e => e.IndexNumber ?? 0)
+            .ToList();
+
+            if (episodes.Count == 0)
+            {
+                _logger.LogDebug("Series {SeriesName} has no episodes, skipping", series.Name);
+                return;
             }
 
-            for (int i = 0; i < trailerPaths.Count; i++)
+            var episodeCount = 0;
+            foreach (var seasonGroup in episodes.GroupBy(e => e.ParentIndexNumber ?? 0).OrderBy(g => g.Key))
             {
-                // Use -trailer suffix for single trailer, -trailer1, -trailer2, etc. for multiple
-                var trailerFilename = trailerPaths.Count == 1
-                    ? $"{baseFilename}-trailer.strm"
-                    : $"{baseFilename}-trailer{i + 1}.strm";
+                var seasonNumber = seasonGroup.Key;
+                var seasonFolder = seasonNumber == 0 ? "Specials" : $"Season {seasonNumber:D2}";
+                var seasonPath = Path.Combine(seriesPath, seasonFolder);
+                Directory.CreateDirectory(seasonPath);
 
-                var trailerStrmPath = Path.Combine(folderPath, trailerFilename);
-                File.WriteAllText(trailerStrmPath, trailerPaths[i]);
-            }
-
-            return trailerPaths.Count;
-        }
-
-        /// <summary>
-        /// Gets local trailer file paths for an item by searching the source directory.
-        /// Jellyfin supports trailers in a 'trailers' subfolder or with -trailer suffix.
-        /// </summary>
-        /// <param name="item">The media item.</param>
-        /// <returns>List of trailer file paths.</returns>
-        private IReadOnlyList<string> GetLocalTrailerPaths(BaseItem item)
-        {
-            var trailerPaths = new List<string>();
-
-            try
-            {
-                if (string.IsNullOrEmpty(item.Path))
+                foreach (var episode in seasonGroup)
                 {
-                    return trailerPaths;
-                }
-
-                var itemDirectory = Path.GetDirectoryName(item.Path);
-                if (string.IsNullOrEmpty(itemDirectory) || !Directory.Exists(itemDirectory))
-                {
-                    return trailerPaths;
-                }
-
-                // Check for trailers subfolder
-                var trailersFolder = Path.Combine(itemDirectory, "trailers");
-                if (Directory.Exists(trailersFolder))
-                {
-                    var trailerFiles = Directory.GetFiles(trailersFolder, "*.*", SearchOption.TopDirectoryOnly)
-                        .Where(f => IsVideoFile(f))
-                        .ToList();
-                    trailerPaths.AddRange(trailerFiles);
-                }
-
-                // Check for files with -trailer suffix in the same directory
-                var suffixPatterns = new[] { "-trailer", ".trailer", "_trailer" };
-                var allFiles = Directory.GetFiles(itemDirectory, "*.*", SearchOption.TopDirectoryOnly);
-
-                foreach (var file in allFiles)
-                {
-                    // Skip non-video files
-                    if (!IsVideoFile(file))
+                    if (string.IsNullOrEmpty(episode.Path))
                     {
                         continue;
                     }
 
-                    var fileName = Path.GetFileNameWithoutExtension(file);
+                    var baseFilename = GenerateEpisodeBaseFilename(episode);
+                    var extension = Path.GetExtension(episode.Path);
+                    var linkPath = Path.Combine(seasonPath, baseFilename + extension);
 
-                    // Check if file matches trailer suffix pattern
-                    foreach (var suffix in suffixPatterns)
+                    try
                     {
-                        if (fileName.EndsWith(suffix, StringComparison.OrdinalIgnoreCase) ||
-                            fileName.Equals("trailer", StringComparison.OrdinalIgnoreCase))
-                        {
-                            if (!trailerPaths.Contains(file))
-                            {
-                                trailerPaths.Add(file);
-                            }
+                        CreateSymlink(linkPath, episode.Path);
+                        episodeCount++;
+                    }
+                    catch (UnauthorizedAccessException ex)
+                    {
+                        LogSymlinkPermissionError(ex, episode.Id);
+                    }
+                    catch (IOException ex)
+                    {
+                        _logger.LogError(ex, "Failed to symlink episode {EpisodeName}", episode.Name);
+                    }
+                }
+            }
 
-                            break;
-                        }
+            _logger.LogDebug(
+                "Created series folder: {SeriesFolder} with {EpisodeCount} episodes, {TrailerCount} trailer(s), {ArtworkCount} artwork file(s)",
+                seriesFolderName,
+                episodeCount,
+                trailerCount,
+                artworkCount);
+        }
+
+        /// <summary>
+        /// Creates a symbolic link at <paramref name="linkPath"/> pointing to <paramref name="targetPath"/>.
+        /// On Windows, this requires Administrator privileges or Developer Mode enabled.
+        /// </summary>
+        private void CreateSymlink(string linkPath, string targetPath)
+        {
+            if (File.Exists(linkPath))
+            {
+                File.Delete(linkPath);
+            }
+
+            File.CreateSymbolicLink(linkPath, targetPath);
+        }
+
+        private void LogSymlinkPermissionError(UnauthorizedAccessException ex, Guid itemId)
+        {
+            const string Msg = "Access denied creating symlink for item {ItemId}. On Windows, Jellyfin must run as Administrator or the host must have Developer Mode enabled (Settings > Privacy & security > For developers). See README troubleshooting section.";
+            _logger.LogError(ex, Msg, itemId);
+        }
+
+        /// <summary>
+        /// Symlinks trailer files from the source directory. Jellyfin discovers trailers via the
+        /// <c>trailers/</c> subfolder or files with a <c>-trailer</c> suffix; we mirror those.
+        /// </summary>
+        private int LinkTrailers(string targetFolder, string baseFilename, string? sourceDir)
+        {
+            if (string.IsNullOrEmpty(sourceDir) || !Directory.Exists(sourceDir))
+            {
+                return 0;
+            }
+
+            var count = 0;
+
+            try
+            {
+                // trailers/ subfolder: mirror it by name
+                var sourceTrailersDir = Path.Combine(sourceDir, "trailers");
+                if (Directory.Exists(sourceTrailersDir))
+                {
+                    var targetTrailersDir = Path.Combine(targetFolder, "trailers");
+                    Directory.CreateDirectory(targetTrailersDir);
+                    foreach (var trailer in Directory.GetFiles(sourceTrailersDir))
+                    {
+                        var linkPath = Path.Combine(targetTrailersDir, Path.GetFileName(trailer));
+                        TryCreateSymlink(linkPath, trailer);
+                        count++;
                     }
                 }
 
-                _logger.LogDebug("Found {Count} local trailers for {ItemName}", trailerPaths.Count, item.Name);
+                // -trailer suffix siblings: symlink with the movie's baseFilename as prefix
+                var siblingTrailers = Directory.GetFiles(sourceDir)
+                    .Where(f =>
+                    {
+                        var name = Path.GetFileNameWithoutExtension(f);
+                        return TrailerSuffixes.Any(s => name.EndsWith(s, StringComparison.OrdinalIgnoreCase))
+                               || name.Equals("trailer", StringComparison.OrdinalIgnoreCase);
+                    })
+                    .ToList();
+
+                for (var i = 0; i < siblingTrailers.Count; i++)
+                {
+                    var trailer = siblingTrailers[i];
+                    var ext = Path.GetExtension(trailer);
+                    var linkName = siblingTrailers.Count == 1
+                        ? $"{baseFilename}-trailer{ext}"
+                        : $"{baseFilename}-trailer{i + 1}{ext}";
+                    var linkPath = Path.Combine(targetFolder, linkName);
+                    TryCreateSymlink(linkPath, trailer);
+                    count++;
+                }
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Failed to get local trailers for item {ItemId}", item.Id);
+                _logger.LogWarning(ex, "Failed to link trailers from {SourceDir}", sourceDir);
             }
 
-            return trailerPaths;
+            return count;
+        }
+
+        /// <summary>
+        /// Symlinks artwork from <see cref="BaseItem.ImageInfos"/> into the target folder using
+        /// standard filenames Jellyfin auto-discovers. Images may be stored either adjacent to
+        /// the media file or in Jellyfin's metadata cache; this uses the item's resolved paths so
+        /// both cases work.
+        /// </summary>
+        private int LinkItemArtwork(string targetFolder, BaseItem item)
+        {
+            // Multiple filenames per image type: Jellyfin's scanner probes conventional names
+            // (folder.jpg, backdrop.jpg) and warns when missing, so we emit those aliases too.
+            var mappings = new (ImageType Type, string Filename)[]
+            {
+                (ImageType.Primary, "poster.jpg"),
+                (ImageType.Primary, "folder.jpg"),
+                (ImageType.Backdrop, "fanart.jpg"),
+                (ImageType.Backdrop, "backdrop.jpg"),
+                (ImageType.Logo, "clearlogo.png"),
+                (ImageType.Thumb, "landscape.jpg"),
+                (ImageType.Banner, "banner.jpg"),
+                (ImageType.Art, "clearart.png"),
+                (ImageType.Disc, "disc.png")
+            };
+
+            var count = 0;
+
+            foreach (var (imageType, filename) in mappings)
+            {
+                string? sourcePath;
+                try
+                {
+                    sourcePath = item.GetImagePath(imageType, 0);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogDebug(ex, "Failed to resolve {ImageType} for {ItemName}", imageType, item.Name);
+                    continue;
+                }
+
+                if (string.IsNullOrEmpty(sourcePath) || !File.Exists(sourcePath))
+                {
+                    continue;
+                }
+
+                // Preserve source extension for primary types where it matters
+                var ext = Path.GetExtension(sourcePath);
+                var linkName = string.IsNullOrEmpty(ext)
+                    ? filename
+                    : Path.ChangeExtension(filename, ext.TrimStart('.'));
+
+                var linkPath = Path.Combine(targetFolder, linkName);
+                if (TryCreateSymlink(linkPath, sourcePath))
+                {
+                    count++;
+                }
+            }
+
+            return count;
+        }
+
+        /// <summary>
+        /// Writes a minimal tvshow.nfo containing provider IDs so Jellyfin's scanner reliably
+        /// identifies the folder as a Series rather than treating its episodes as standalone items.
+        /// </summary>
+        private void WriteTvShowNfo(string seriesPath, Series series)
+        {
+            var nfoPath = Path.Combine(seriesPath, "tvshow.nfo");
+
+            var sb = new StringBuilder();
+            sb.AppendLine("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>");
+            sb.AppendLine("<tvshow>");
+            sb.Append("  <title>").Append(XmlEscape(series.Name ?? "Unknown")).AppendLine("</title>");
+            if (series.ProductionYear.HasValue)
+            {
+                sb.Append("  <year>").Append(series.ProductionYear.Value).AppendLine("</year>");
+            }
+
+            var providerIds = series.ProviderIds ?? new Dictionary<string, string>();
+            if (providerIds.TryGetValue("Tmdb", out var tmdb) && !string.IsNullOrEmpty(tmdb))
+            {
+                sb.Append("  <tmdbid>").Append(tmdb).AppendLine("</tmdbid>");
+                sb.Append("  <uniqueid type=\"tmdb\">").Append(tmdb).AppendLine("</uniqueid>");
+            }
+
+            if (providerIds.TryGetValue("Tvdb", out var tvdb) && !string.IsNullOrEmpty(tvdb))
+            {
+                sb.Append("  <tvdbid>").Append(tvdb).AppendLine("</tvdbid>");
+                sb.Append("  <uniqueid type=\"tvdb\">").Append(tvdb).AppendLine("</uniqueid>");
+            }
+
+            if (providerIds.TryGetValue("Imdb", out var imdb) && !string.IsNullOrEmpty(imdb))
+            {
+                sb.Append("  <imdbid>").Append(imdb).AppendLine("</imdbid>");
+                sb.Append("  <uniqueid type=\"imdb\">").Append(imdb).AppendLine("</uniqueid>");
+            }
+
+            sb.AppendLine("</tvshow>");
+
+            try
+            {
+                File.WriteAllText(nfoPath, sb.ToString(), new UTF8Encoding(false));
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to write tvshow.nfo for {SeriesName}", series.Name);
+            }
+        }
+
+        private string XmlEscape(string value)
+            => value.Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;").Replace("\"", "&quot;");
+
+        private bool TryCreateSymlink(string linkPath, string targetPath)
+        {
+            try
+            {
+                CreateSymlink(linkPath, targetPath);
+                return true;
+            }
+            catch (UnauthorizedAccessException ex)
+            {
+                const string Msg = "Access denied creating symlink {LinkPath} -> {TargetPath}. On Windows, Jellyfin must run as Administrator or have Developer Mode enabled.";
+                _logger.LogWarning(ex, Msg, linkPath, targetPath);
+                return false;
+            }
+            catch (IOException ex)
+            {
+                _logger.LogWarning(ex, "IO error creating symlink {LinkPath} -> {TargetPath}", linkPath, targetPath);
+                return false;
+            }
         }
 
         private string GenerateFolderName(BaseItem item)
@@ -503,89 +564,6 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
                 : $"{title} [{providerId}]";
         }
 
-        private void CreateSeriesStrmStructure(string libraryPath, Series series)
-        {
-            // Create series folder: "Series Name (Year) [tvdbid-123]"
-            var seriesFolderName = GenerateFolderName(series);
-            var seriesPath = Path.Combine(libraryPath, seriesFolderName);
-
-            try
-            {
-                Directory.CreateDirectory(seriesPath);
-
-                // 1. Create trailer .strm files if the source has local trailers
-                var trailerCount = CreateTrailerStrmFiles(seriesPath, seriesFolderName, series);
-
-                // 2. Sync images from source series (poster, backdrop)
-                var config = Plugin.Instance?.Configuration ?? new PluginConfiguration();
-                if (config.EnableImageSync)
-                {
-                    _imageSyncService.SyncImages(series, seriesPath, config.SyncBackdrops);
-                }
-
-                // 3. Get all episodes for this series
-                var episodes = _libraryManager.GetItemList(new InternalItemsQuery
-                {
-                    ParentId = series.Id,
-                    IncludeItemTypes = new[] { BaseItemKind.Episode },
-                    Recursive = true
-                })
-                .OfType<Episode>()
-                .OrderBy(e => e.ParentIndexNumber ?? 0)
-                .ThenBy(e => e.IndexNumber ?? 0)
-                .ToList();
-
-                if (episodes.Count == 0)
-                {
-                    _logger.LogWarning("Series {SeriesName} has no episodes, skipping .strm creation", series.Name);
-                    return;
-                }
-
-                // Group episodes by season
-                var episodesBySeason = episodes.GroupBy(e => e.ParentIndexNumber ?? 0);
-
-                var episodeCount = 0;
-                foreach (var seasonGroup in episodesBySeason.OrderBy(g => g.Key))
-                {
-                    var seasonNumber = seasonGroup.Key;
-                    var seasonFolder = seasonNumber == 0 ? "Specials" : $"Season {seasonNumber:D2}";
-                    var seasonPath = Path.Combine(seriesPath, seasonFolder);
-
-                    Directory.CreateDirectory(seasonPath);
-
-                    foreach (var episode in seasonGroup)
-                    {
-                        if (string.IsNullOrEmpty(episode.Path))
-                        {
-                            _logger.LogDebug("Episode {EpisodeName} has no path, skipping", episode.Name);
-                            continue;
-                        }
-
-                        // Create episode .strm file
-                        var episodeBaseFilename = GenerateEpisodeBaseFilename(episode);
-                        var episodeStrmPath = Path.Combine(seasonPath, episodeBaseFilename + ".strm");
-                        File.WriteAllText(episodeStrmPath, episode.Path);
-
-                        episodeCount++;
-                    }
-                }
-
-                _logger.LogDebug(
-                    "Created series folder structure: {SeriesFolder} with {EpisodeCount} episodes and {TrailerCount} trailer(s)",
-                    seriesFolderName,
-                    episodeCount,
-                    trailerCount);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to create series folder structure for {SeriesName}", series.Name);
-                throw;
-            }
-        }
-
-        /// <summary>
-        /// Generates base filename for an episode (without extension).
-        /// </summary>
         private string GenerateEpisodeBaseFilename(Episode episode)
         {
             var seriesName = SanitizeFilename(episode.SeriesName ?? "Unknown");
@@ -593,28 +571,23 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
             var episodeNum = episode.IndexNumber ?? 0;
             var episodeName = SanitizeFilename(episode.Name ?? "Episode");
 
-            // Format: "SeriesName - S01E01 - Episode Title"
             return $"{seriesName} - S{seasonNum:D2}E{episodeNum:D2} - {episodeName}";
         }
 
         private string GetProviderId(BaseItem item)
         {
-            // ProviderIds should never be null but be defensive
             var providerIds = item.ProviderIds ?? new Dictionary<string, string>();
 
-            // Try TMDB first (for movies)
             if (providerIds.TryGetValue("Tmdb", out var tmdbId) && !string.IsNullOrEmpty(tmdbId))
             {
                 return $"tmdbid-{tmdbId}";
             }
 
-            // Try TVDB (for series)
             if (providerIds.TryGetValue("Tvdb", out var tvdbId) && !string.IsNullOrEmpty(tvdbId))
             {
                 return $"tvdbid-{tvdbId}";
             }
 
-            // Fallback to Jellyfin internal ID
             return $"jellyfinid-{item.Id}";
         }
 
@@ -625,82 +598,18 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
                 return "Unknown";
             }
 
-            // Remove invalid filename characters
-            // Use a cross-platform set of invalid chars (Path.GetInvalidFileNameChars() varies by OS)
-            // Windows disallows: < > : " / \ | ? *
-            // Linux only disallows: / and null
-            // We use the Windows set for maximum compatibility across network shares and platforms
-            var invalidChars = new char[] { '<', '>', ':', '"', '/', '\\', '|', '?', '*' };
+            var invalidChars = new[] { '<', '>', ':', '"', '/', '\\', '|', '?', '*' };
             var sanitized = string.Join("_", filename.Split(invalidChars, StringSplitOptions.RemoveEmptyEntries));
 
-            // Prevent path traversal: remove directory separators and parent directory references
-            sanitized = sanitized.Replace("..", "_")
-                                 .Replace("/", "_")
-                                 .Replace("\\", "_");
+            sanitized = sanitized.Replace("..", "_").Replace("/", "_").Replace("\\", "_");
+            sanitized = sanitized.TrimStart('.', '-').TrimEnd();
 
-            // Additional safety: ensure no leading dots or dashes that could cause issues
-            sanitized = sanitized.TrimStart('.', '-');
-
-            // Limit length
             if (sanitized.Length > 200)
             {
                 sanitized = sanitized.Substring(0, 200);
             }
 
-            // Final check: if empty after sanitization, use default
-            sanitized = sanitized.TrimEnd();
-            if (string.IsNullOrEmpty(sanitized))
-            {
-                return "Unknown";
-            }
-
-            return sanitized;
-        }
-
-        private List<string> GetExistingStrmFiles(string libraryPath)
-        {
-            if (!Directory.Exists(libraryPath))
-            {
-                return new List<string>();
-            }
-
-            try
-            {
-                return Directory.GetFiles(libraryPath, "*.strm", SearchOption.TopDirectoryOnly).ToList();
-            }
-            catch (IOException ex)
-            {
-                _logger.LogError(ex, "Failed to enumerate .strm files in {Path}", libraryPath);
-                return new List<string>();
-            }
-            catch (UnauthorizedAccessException ex)
-            {
-                _logger.LogError(ex, "Access denied when enumerating .strm files in {Path}", libraryPath);
-                return new List<string>();
-            }
-        }
-
-        private List<string> GetExistingSeriesFolders(string libraryPath)
-        {
-            if (!Directory.Exists(libraryPath))
-            {
-                return new List<string>();
-            }
-
-            try
-            {
-                return Directory.GetDirectories(libraryPath, "*", SearchOption.TopDirectoryOnly).ToList();
-            }
-            catch (IOException ex)
-            {
-                _logger.LogError(ex, "Failed to enumerate series folders in {Path}", libraryPath);
-                return new List<string>();
-            }
-            catch (UnauthorizedAccessException ex)
-            {
-                _logger.LogError(ex, "Access denied when enumerating series folders in {Path}", libraryPath);
-                return new List<string>();
-            }
+            return string.IsNullOrEmpty(sanitized) ? "Unknown" : sanitized;
         }
     }
 }

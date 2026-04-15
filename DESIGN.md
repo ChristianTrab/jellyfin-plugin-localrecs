@@ -30,7 +30,7 @@ The plugin follows a **layered architecture** with clear separation of concerns:
 │                   Plugin Layer                           │
 │  ┌─────────────────┐  ┌─────────────────────────────┐  │
 │  │ Scheduled Tasks │  │   Virtual Library Manager   │  │
-│  │ - Refresh Task  │  │   - .strm file generation   │  │
+│  │ - Refresh Task  │  │   - Symlink generation      │  │
 │  │ - Benchmark     │  │   - Directory management    │  │
 │  └─────────────────┘  └─────────────────────────────┘  │
 │                                                          │
@@ -80,7 +80,7 @@ The plugin follows a **layered architecture** with clear separation of concerns:
 **Responsibilities:**
 - Coordinates all services to generate fresh recommendations
 - Manages the recommendation refresh workflow for all users
-- Integrates with Virtual Library Manager to update .strm files
+- Integrates with Virtual Library Manager to update symlinks
 - Provides entry point for scheduled tasks and manual refreshes
 
 **Workflow:**
@@ -90,7 +90,7 @@ The plugin follows a **layered architecture** with clear separation of concerns:
 4. For each user:
    - Build user profile via User Profile Service
    - Generate recommendations via Recommendation Engine
-   - Update virtual library .strm files via Virtual Library Manager
+   - Update virtual library symlinks via Virtual Library Manager
 5. Log completion and provide feedback to admin
 
 **Key insight:** This service is the "main entry point" that ties together all the domain services into a cohesive recommendation pipeline.
@@ -109,7 +109,7 @@ The plugin follows a **layered architecture** with clear separation of concerns:
 - Media type (Movie or Series)
 - Genres, actors, directors, tags
 - Community rating and release year
-- Original Jellyfin path for .strm file generation
+- Original Jellyfin path for symlink generation
 
 **Key insight:** By creating a clean abstraction layer (`MediaItemMetadata`), the plugin can be developed and tested independently of Jellyfin's complex internal APIs.
 
@@ -281,7 +281,20 @@ The Recommendation Engine supports an optional rating proximity feature that ble
 #### 7. Virtual Library Manager
 **Purpose:** Expose recommendations as per-user virtual libraries with complete metadata.
 
-**Implementation:** `.strm` file-based approach with local trailer support.
+**Implementation:** Filesystem symlink-based approach. The virtual library mirrors the source
+media structure using symbolic links. Each symlink has the source file's real extension, so
+Jellyfin's media pipeline treats it as regular media and transcoding, probing, and artwork
+discovery all work natively.
+
+**Historical note:** Prior versions (≤0.5.3) used `.strm` files containing the source path.
+Jellyfin 10.11.7 shipped security fix [GHSA-j2hf-x4q5-47j3](https://github.com/jellyfin/jellyfin/security/advisories/GHSA-j2hf-x4q5-47j3)
+restricting `.strm` files to remote URL schemes only (`http`, `https`, `rtsp`, `rtp`). Local paths
+were silently dropped, breaking transcoded playback. Symlinks bypass the `.strm` parser entirely.
+
+> ⚠️ **Windows hosts:** symlink creation requires either Administrator privileges **or** Windows
+> Developer Mode enabled (Settings → Privacy & security → For developers → Developer Mode).
+> Docker-on-Linux deployments and native Linux installs are unaffected. See the README
+> troubleshooting section for remediation.
 
 **Directory Structure:**
 ```
@@ -289,75 +302,38 @@ The Recommendation Engine supports an optional rating proximity feature that ble
 ├── {userId1}/
 │   ├── movies/
 │   │   └── Movie Title (2020) [tmdbid-12345]/
-│   │       ├── Movie Title (2020) [tmdbid-12345].strm    # Main movie file
-│   │       └── Movie Title (2020) [tmdbid-12345]-trailer.strm  # Trailer (if exists)
+│   │       ├── Movie Title (2020) [tmdbid-12345].mkv    # symlink → source media
+│   │       ├── Movie Title (2020) [tmdbid-12345]-trailer.mp4  # symlink (if exists)
+│   │       ├── poster.jpg                                # symlink → source artwork
+│   │       └── fanart.jpg                                # symlink → source artwork
 │   └── tv/
 │       └── Show Title (2019) [tvdbid-67890]/
-│           ├── Show Title (2019) [tvdbid-67890]-trailer.strm   # Series trailer (if exists)
+│           ├── poster.jpg                                # symlink → series artwork
 │           ├── Season 01/
-│           │   ├── Show - S01E01 - Episode Title.strm    # Episode file
-│           │   └── Show - S01E02 - Episode Title.strm
+│           │   ├── Show - S01E01 - Episode Title.mkv    # symlink → episode source
+│           │   └── Show - S01E02 - Episode Title.mkv
 │           └── Season 02/
-│               └── Show - S02E01 - Episode Title.strm
+│               └── Show - S02E01 - Episode Title.mkv
 └── {userId2}/
     ├── movies/
     └── tv/
 ```
 
-**Important Notes on File Types:**
-- **Movies:** Folder containing `.strm` and optional `-trailer.strm` files
-- **TV Series:** Folder structure containing:
-  - Series folder: `Show Name (Year) [tvdbid-12345]/`
-  - Series trailers: `Show Name-trailer.strm` (if source has local trailers)
-  - Season subfolders: `Season 01/`, `Season 02/`, `Specials/`
-  - Episode `.strm` files for each episode
+**Artwork:** Jellyfin's native scanner picks up sibling `poster.jpg`, `fanart.jpg`, etc.
+The plugin symlinks any of the following from the source folder into the virtual folder so
+custom artwork on source items (e.g. French posters, user uploads) carries through without a
+dedicated copy step: `poster.{jpg,png,webp}`, `folder.{jpg,png}`, `fanart.{jpg,png}`,
+`backdrop.{jpg,png}`, `landscape.{jpg,png}`, `banner.{jpg,png}`, `logo.png`, `clearart.png`,
+`clearlogo.png`, `disc.png`, `thumb.jpg`.
 
-**Why .strm files?**
-- Standard Jellyfin mechanism for virtual/remote content
-- Each file contains the full path to the original media file
-- Jellyfin handles playback automatically (including series navigation)
-- No duplication of media files
-- Works across all Jellyfin clients
-- Preserves series/season/episode hierarchy for TV shows
-
-**Why trailer .strm files?**
-- Enables local trailer playback on all clients (including Roku)
-- Uses `-trailer` suffix naming convention (Jellyfin standard)
-- Points to source trailer files on disk (not remote URLs)
-- Remote trailer URLs don't work on all clients (e.g., Roku)
-
-#### 7a. Image Sync Service
-**Purpose:** Copy poster and backdrop images from source library items to virtual library folders.
-
-**Problem Solved:**
-- Users who customize posters (e.g., French posters, custom artwork) see defaults in recommendation libraries
-- Jellyfin fetches fresh metadata from TMDB/TVDB for virtual library items, ignoring source customizations
-
-**Implementation:**
-- Copies `poster.jpg` and `backdrop.jpg` (configurable) to virtual library folders
-- Uses Jellyfin's `BaseItem.GetImagePath(ImageType, index)` to locate source images
-- Preserves original file format (jpg/png/webp)
-- Graceful error handling (missing images don't fail the sync)
-
-**Directory Structure with Images:**
-```
-Movie Title (2020) [tmdbid-12345]/
-├── Movie Title (2020) [tmdbid-12345].strm    # Points to source media
-├── poster.jpg                                  # Copied from source item
-├── backdrop.jpg                                # Copied from source (optional)
-└── Movie Title-trailer.strm                    # Trailer (if exists)
-```
-
-**Configuration Options:**
-- `EnableImageSync` (default: true) - Copy poster images to recommendation libraries
-- `SyncBackdrops` (default: true) - Also copy backdrop/fanart images
-
-**Note:** This only syncs images, not text metadata (titles, descriptions, ratings). NFO files don't work for .strm content, and modifying Jellyfin's database directly would be fragile.
+**Trailers:** Jellyfin's trailer discovery (`trailers/` subfolder and `-trailer` suffix
+siblings) is handled by symlinking the trailer files by name — no custom scanning logic.
 
 **Sync Algorithm:** Clear-and-recreate
-1. Delete all existing files and folders
-2. Recreate directory structure
-3. Create fresh .strm and trailer files for current recommendations
+1. Delete the user's media-type directory recursively (`Directory.Delete(recursive: true)` —
+   removes symlinks without following them)
+2. Recreate the directory
+3. Create fresh symlinks for current recommendations (media + artwork + trailers)
 4. Trigger Jellyfin library scan to update database
 
 **Why clear-and-recreate instead of diff-based sync?**
@@ -383,7 +359,7 @@ Movie Title (2020) [tmdbid-12345]/
 1. User finishes watching or toggles played/favorite on a virtual library item
 2. `OnUserDataSaved` fires with a non-transient `SaveReason`
 3. Item is queued for sync (debounced, keyed by user+item to coalesce duplicates)
-4. After 5s, `FlushQueue` reads the `.strm` file to find the source item path
+4. After 5s, `FlushQueue` resolves the symlink target to find the source item path
 5. Play status (Played, PlayCount, PlaybackPositionTicks, LastPlayedDate, IsFavorite) is copied from virtual item to source item
 
 **Deferred Removal:**
@@ -410,10 +386,10 @@ Movie Title (2020) [tmdbid-12345]/
 **Scheduled Task Flow:**
 1. Compute fresh embeddings for all library items
 2. Generate recommendations for all users based on current watch history
-3. Clear old .strm files and create new ones for each user
-4. Log instructions for manual library scan (automatic scanning disabled due to .strm file removal issues)
+3. Clear old symlinks and create new ones for each user
+4. Log instructions for manual library scan (automatic scanning disabled due to scan-timing issues)
 
-**Note:** Automatic library scanning is intentionally disabled. Jellyfin's `ValidateMediaLibrary()` can remove .strm files before metadata is fetched. Users should manually scan their recommendation libraries or rely on scheduled library scans.
+**Note:** Automatic library scanning is intentionally disabled. Users should manually scan their recommendation libraries or rely on scheduled library scans.
 
 ## Jellyfin API Constraints
 
@@ -470,7 +446,7 @@ Movie Title (2020) [tmdbid-12345]/
    - Recommendation Engine scores all unwatched candidates using content similarity (and optionally rating proximity)
    - Excludes items with playback progress
    - Top N items selected per media type (movies, TV)
-   - Virtual Library Manager clears old .strm files and creates new ones for this user
+   - Virtual Library Manager clears old symlinks and creates new ones for this user
 6. Recommendation Refresh Service logs completion
 7. Users manually scan recommendation libraries (or wait for scheduled scan) to see updated recommendations
 
@@ -499,7 +475,7 @@ Movie Title (2020) [tmdbid-12345]/
 ### Optimization Strategies
 - **Vocabulary limits:** Top 500 actors/tags by frequency (configurable)
 - **Fresh computation:** Embeddings computed on every refresh to ensure recommendations reflect current watch history
-- **Clear-and-recreate:** Virtual library .strm files completely replaced each refresh (no incremental sync complexity)
+- **Clear-and-recreate:** Virtual library symlinks completely replaced each refresh (no incremental sync complexity)
 
 ### Scalability
 - **Up to 10k items:** Expected to work well with default settings
@@ -543,15 +519,12 @@ All settings exposed via plugin configuration UI and stored in Jellyfin's plugin
 **Limitation:** Items in the virtual recommendation libraries do not display full text metadata (runtime, ratings, genres, cast, etc.) in the Jellyfin UI.
 
 **Why this happens:**
-- Virtual library items are `.strm` files that point to the original media files
-- Jellyfin does not read NFO sidecar files for `.strm` content (despite supporting NFO for regular media)
-- The `.strm` file format only contains a path reference, not embedded metadata
-- Jellyfin's metadata providers don't fetch metadata for `.strm` files pointing to local content
+- Virtual library items are symlinks under a distinct library root, so Jellyfin treats them as separate `BaseItem`s from the source media
+- Metadata providers run against the virtual item's library root, which may be configured differently than the source library (e.g., no TMDB lookups)
 
 **What DOES work:**
-- **Poster images:** Custom posters are synced from source items (via Image Sync Service)
-- **Backdrop images:** Custom backdrops are synced from source items (configurable)
-- **Playback:** All media plays correctly through the source files
+- **Poster/backdrop images:** Jellyfin picks up `poster.jpg`, `fanart.jpg`, etc. that the plugin symlinks from the source folder, preserving any custom artwork
+- **Playback:** All media plays correctly through the symlinked files (direct play and transcoding both work, unlike the old `.strm` approach on Jellyfin ≥10.11.7)
 
 **What does NOT work:**
 - Runtime/duration is not displayed for recommendations (shows as unknown or 0:00)
@@ -559,7 +532,6 @@ All settings exposed via plugin configuration UI and stored in Jellyfin's plugin
 - Any text metadata customizations from source items
 
 **Workarounds considered but not viable for text metadata:**
-- NFO files: Jellyfin ignores NFO files for `.strm` content
 - Direct database manipulation: Would bypass Jellyfin's APIs and risk data corruption
 - Custom metadata providers: Would require significant additional complexity
 - Jellyfin API calls post-scan: Fragile timing, items may not exist yet when called
@@ -572,10 +544,10 @@ All settings exposed via plugin configuration UI and stored in Jellyfin's plugin
 
 ### Duplicate "Continue Watching" / "Next Up" Entries
 
-**Limitation:** Partially watched recommendations appear twice in "Continue Watching" (movies) or "Next Up" (TV series) — once for the virtual `.strm` item and once for the source media file.
+**Limitation:** Partially watched recommendations appear twice in "Continue Watching" (movies) or "Next Up" (TV series) — once for the virtual symlinked item and once for the source media file.
 
 **Why this happens:**
-- The virtual `.strm` file and the source media file are separate items in Jellyfin's database
+- The virtual symlink and the source media file are separate items in Jellyfin's database (different paths → different rows)
 - Both accumulate independent playback position when watched
 - PlayStatusSyncService syncs the final state (Played, PlayCount, etc.) from virtual to source, but Jellyfin tracks playback position on both items during active playback
 - Removing the virtual item mid-playback causes crashes (Jellyfin loses the active stream reference), so removal is deferred to the next recommendation refresh
@@ -603,12 +575,12 @@ All settings exposed via plugin configuration UI and stored in Jellyfin's plugin
 
 **Security considerations:**
 - Input sanitization for filenames (prevent path traversal)
-- Thread-safe file operations (per-user locking for .strm file writes)
+- Thread-safe file operations (per-user locking for symlink writes)
 - Proper error handling to prevent information leakage in logs
 - Respects Jellyfin's user permission model
 
 ## Summary
 
-Local Recommendations provides a privacy-conscious, efficient recommendation system for Jellyfin that works within the constraints of the Jellyfin plugin API. By using content-based filtering (TF-IDF + cosine similarity) and per-user virtual libraries (.strm files), the plugin delivers personalized recommendations accessible from any Jellyfin client while maintaining complete data privacy.
+Local Recommendations provides a privacy-conscious, efficient recommendation system for Jellyfin that works within the constraints of the Jellyfin plugin API. By using content-based filtering (TF-IDF + cosine similarity) and per-user virtual libraries (filesystem symlinks), the plugin delivers personalized recommendations accessible from any Jellyfin client while maintaining complete data privacy.
 
 The architecture is designed for maintainability, testability, and performance on typical home server hardware, with clear extension points for future enhancements.

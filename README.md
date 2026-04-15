@@ -7,6 +7,8 @@ Privacy-first personalized recommendations for Jellyfin based entirely on local 
 
 Please report any issues or feedback on [GitHub Issues](https://github.com/rdpharr/jellyfin-plugin-localrecs/issues).
 
+> ⚠️ **Windows hosts:** As of v0.6.0, this plugin creates filesystem symlinks to expose recommendations. On Windows, symlink creation requires either **running Jellyfin as Administrator** or **enabling Windows Developer Mode** (Settings → Privacy & security → For developers → Developer Mode). Without one of these, recommendation refreshes will log "Access denied creating symlink" and the virtual libraries will be empty. Docker-on-Linux and native Linux deployments are unaffected. See [Troubleshooting](#troubleshooting) below.
+
 ## Features
 
 - **Per-user personalization** - Tailored recommendations for each user's viewing history
@@ -127,7 +129,7 @@ Access via: **Dashboard → Plugins → Local Recommendations → Settings**
 
 Recommendations appear as separate libraries for each user:
 
-- Plugin creates `.strm` files pointing to original media files
+- Plugin creates filesystem symlinks pointing to original media files (with matching artwork symlinks)
 - Admin creates Jellyfin libraries pointing to plugin directories (one-time setup)
 - Each user gets Movies and TV libraries with personalized recommendations
 - Play status sync: Watch state on recommendation items is synced back to the source library
@@ -143,10 +145,37 @@ Recommendations appear as separate libraries for each user:
 
 ## Known Limitations
 
-- **Duplicate "Continue Watching" / "Next Up":** Partially watched recommendations appear twice — once for the `.strm` item and once for the source media file. This resolves on the next recommendation refresh, or you can manually trigger a refresh from Scheduled Tasks.
-- **Metadata display:** Virtual library items may not show full metadata (runtime, ratings, cast) in the UI due to Jellyfin's `.strm` file handling. Playback and posters work normally.
+- **Duplicate "Continue Watching" / "Next Up":** Partially watched recommendations appear twice — once for the virtual (symlinked) item and once for the source media file. This resolves on the next recommendation refresh, or you can manually trigger a refresh from Scheduled Tasks.
+- **Metadata display:** Virtual library items may not show full text metadata (runtime, ratings, cast) in the UI because Jellyfin treats them as items in a separate library. Posters, backdrops, and playback work normally.
 - **Manual setup required:** Admin must manually create libraries and set permissions (Jellyfin API limitation)
 - **Library scanning:** Manually scan recommendation libraries after refresh to see updates
+- **Windows symlink permissions:** Requires Administrator or Developer Mode — see Troubleshooting.
+
+## Troubleshooting
+
+### Recommendation libraries are empty after refresh (Windows)
+
+If the refresh task completes without errors but the recommendation libraries are empty, check
+the Jellyfin log for `Access denied creating symlink`. This means the Jellyfin process lacks
+permission to create symbolic links, which is required on Windows.
+
+**Fix (pick one):**
+
+1. **Enable Windows Developer Mode** (recommended, no elevation needed):
+   Settings → Privacy & security → For developers → turn on **Developer Mode**, then restart
+   the Jellyfin service.
+2. **Run Jellyfin as Administrator.** Right-click the service or launcher → Run as administrator.
+   If Jellyfin runs as a Windows service, configure the service's logon account to a user with
+   `SeCreateSymbolicLinkPrivilege` granted, or to a local administrator.
+
+After either change, run **Dashboard → Scheduled Tasks → Refresh Local Recommendations**.
+
+### Transcoded playback fails on Jellyfin 10.11.7+ (plugin versions ≤0.5.3)
+
+Upgrade to **v0.6.0 or later**. Jellyfin 10.11.7 shipped a security fix
+([GHSA-j2hf-x4q5-47j3](https://github.com/jellyfin/jellyfin/security/advisories/GHSA-j2hf-x4q5-47j3))
+that broke the old `.strm`-based approach. v0.6.0 switches to symlinks, which bypass the
+restricted `.strm` parser entirely.
 
 ## Building from Source
 

@@ -78,7 +78,7 @@ namespace Jellyfin.Plugin.LocalRecs.Services
                     }
                 }
 
-                _logger.LogInformation(
+                _logger.LogDebug(
                     "Retrieved {Count} media items from library ({Movies} movies, {Series} series)",
                     items.Count,
                     movies.Count,

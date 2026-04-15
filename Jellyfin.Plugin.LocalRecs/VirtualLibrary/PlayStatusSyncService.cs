@@ -182,15 +182,14 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
                     return;
                 }
 
-                // Find all .strm files in the user's virtual library
-                var strmFiles = Directory.GetFiles(userVirtualLibraryPath, "*.strm", SearchOption.AllDirectories);
+                // Iterate all symlinks under the user's virtual library
+                var linkPaths = Directory.EnumerateFiles(userVirtualLibraryPath, "*", SearchOption.AllDirectories);
 
-                foreach (var strmFile in strmFiles)
+                foreach (var linkPath in linkPaths)
                 {
                     try
                     {
-                        // Read the source path from the .strm file
-                        var sourcePath = File.ReadAllText(strmFile).Trim();
+                        var sourcePath = ResolveSymlinkTarget(linkPath);
                         if (string.IsNullOrEmpty(sourcePath))
                         {
                             continue;
@@ -198,7 +197,7 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
 
                         // Find the source and virtual items
                         var sourceItem = _libraryManager.FindByPath(sourcePath, isFolder: false);
-                        var virtualItem = _libraryManager.FindByPath(strmFile, isFolder: false);
+                        var virtualItem = _libraryManager.FindByPath(linkPath, isFolder: false);
 
                         if (sourceItem == null || virtualItem == null)
                         {
@@ -214,7 +213,7 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
                     catch (Exception ex)
                     {
                         errorCount++;
-                        _logger.LogWarning(ex, "Failed to sync play status for .strm file: {Path}", strmFile);
+                        _logger.LogWarning(ex, "Failed to sync play status for symlink: {Path}", linkPath);
                     }
                 }
 
@@ -255,6 +254,24 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
             }
 
             _logger.LogInformation("Completed play status sync from source library for all users");
+        }
+
+        /// <summary>
+        /// Resolves the final target of a symbolic link. Returns null if the path is not a symlink
+        /// or cannot be resolved.
+        /// </summary>
+        private static string? ResolveSymlinkTarget(string linkPath)
+        {
+            try
+            {
+                var info = new FileInfo(linkPath);
+                var target = info.ResolveLinkTarget(returnFinalTarget: true);
+                return target?.FullName;
+            }
+            catch (Exception)
+            {
+                return null;
+            }
         }
 
         /// <summary>
@@ -403,12 +420,7 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
                     return;
                 }
 
-                // Only process .strm files in our virtual library
-                if (!item.Path.EndsWith(".strm", StringComparison.OrdinalIgnoreCase))
-                {
-                    return;
-                }
-
+                // Only process items inside our virtual library (symlinks to source media)
                 if (!IsVirtualLibraryPath(item.Path))
                 {
                     return;
@@ -443,8 +455,7 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
                     return;
                 }
 
-                // Read the source path from the .strm file
-                var sourcePath = File.ReadAllText(virtualItem.Path).Trim();
+                var sourcePath = ResolveSymlinkTarget(virtualItem.Path);
                 if (string.IsNullOrEmpty(sourcePath))
                 {
                     return;
@@ -547,8 +558,8 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
                     return;
                 }
 
-                // Only handle virtual library .strm items (sync to source)
-                if (item.Path.EndsWith(".strm", StringComparison.OrdinalIgnoreCase) && IsVirtualLibraryPath(item.Path))
+                // Only handle virtual library items (sync to source)
+                if (IsVirtualLibraryPath(item.Path))
                 {
                     QueuePlayStatusUpdate(e.UserId, item, e.UserData);
                 }
@@ -595,11 +606,10 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
         {
             try
             {
-                // Read the .strm file to get the source path
-                var sourcePath = File.ReadAllText(virtualItem.Path).Trim();
+                var sourcePath = ResolveSymlinkTarget(virtualItem.Path);
                 if (string.IsNullOrEmpty(sourcePath))
                 {
-                    _logger.LogWarning("Empty .strm file: {Path}", virtualItem.Path);
+                    _logger.LogWarning("Could not resolve symlink target: {Path}", virtualItem.Path);
                     return;
                 }
 
@@ -667,7 +677,7 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
             }
             catch (IOException ex)
             {
-                _logger.LogError(ex, "Failed to read .strm file: {Path}", virtualItem.Path);
+                _logger.LogError(ex, "Failed to resolve symlink: {Path}", virtualItem.Path);
             }
             catch (Exception ex)
             {
