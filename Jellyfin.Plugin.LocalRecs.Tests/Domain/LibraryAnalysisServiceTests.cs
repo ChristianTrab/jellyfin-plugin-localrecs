@@ -58,7 +58,7 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Domain
             SetupLibraryManagerReturns(movies, series);
 
             // Act
-            var result = _service.GetAllMediaItems();
+            var result = _service.GetAllMediaItems(includeSeries: true);
 
             // Assert
             result.Should().HaveCount(3);
@@ -108,11 +108,27 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Domain
             SetupLibraryManagerReturns(new List<BaseItem>(), series);
 
             // Act
-            var result = _service.GetAllMediaItems();
+            var result = _service.GetAllMediaItems(includeSeries: true);
 
             // Assert
             result.Should().ContainSingle();
             result[0].Type.Should().Be(Models.MediaType.Series);
+        }
+
+        [Fact]
+        public void GetAllMediaItems_DefaultExcludesSeriesWhenTvDisabled()
+        {
+            // Arrange
+            var movies = new List<BaseItem> { CreateMockMovie("Movie 1", 2020) };
+            var series = new List<BaseItem> { CreateMockSeries("Series 1", 2020) };
+            SetupLibraryManagerReturns(movies, series);
+
+            // Act — parameterless overload follows plugin config (TV disabled by default in tests)
+            var result = _service.GetAllMediaItems();
+
+            // Assert
+            result.Should().ContainSingle();
+            result[0].Type.Should().Be(Models.MediaType.Movie);
         }
 
         #endregion
@@ -558,7 +574,7 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Domain
             SetupLibraryManagerReturns(new List<BaseItem>(), new List<BaseItem> { series });
 
             // Act
-            var result = _service.GetAllMediaItems();
+            var result = _service.GetAllMediaItems(includeSeries: true);
 
             // Assert
             result[0].TvdbId.Should().Be("67890");

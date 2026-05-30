@@ -4,6 +4,7 @@ using System.Linq;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using Jellyfin.Plugin.LocalRecs.Configuration;
 using MediaBrowser.Controller.Library;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -195,20 +196,29 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
 
         private string BuildSetupInstructions(System.Collections.Generic.List<Jellyfin.Database.Implementations.Entities.User> users)
         {
+            var config = Plugin.Instance?.Configuration ?? new PluginConfiguration();
+            var tvEnabled = config.IsTvRecommendationsEnabled();
             var sb = new StringBuilder();
 
             sb.AppendLine("================================================================================");
             sb.AppendLine($"Local Recommendations - Virtual Libraries Initialized (Build: {Plugin.BuildVersion})");
             sb.AppendLine("================================================================================");
-            sb.AppendLine("IMPORTANT: Each content type is a SEPARATE library in Jellyfin");
-            sb.AppendLine("(e.g., \"John's Recommended Movies\", \"John's Recommended TV\")");
+            if (tvEnabled)
+            {
+                sb.AppendLine("IMPORTANT: Each content type is a SEPARATE library in Jellyfin");
+                sb.AppendLine("(e.g., \"John's Recommended Movies\", \"John's Recommended TV\")");
+            }
+            else
+            {
+                sb.AppendLine("Movies-only mode: create one Recommended Movies library per user.");
+            }
+
             sb.AppendLine("================================================================================");
             sb.AppendLine();
 
             foreach (var user in users)
             {
                 var moviePath = Path.Combine(_virtualLibraryBasePath, user.Id.ToString(), "movies");
-                var tvPath = Path.Combine(_virtualLibraryBasePath, user.Id.ToString(), "tv");
                 var username = user.Username ?? "Unknown";
 
                 sb.AppendLine($"User: {username} (ID: {user.Id})");
@@ -218,17 +228,32 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
                 sb.AppendLine("      Library Type: Movies");
                 sb.AppendLine($"      Suggested Name: \"{username}'s Recommended Movies\"");
                 sb.AppendLine($"      User Display Name: \"{RecommendationLibraryProvisioningService.GetMovieLibraryDisplayName()}\"");
-                sb.AppendLine();
-                sb.AppendLine("  [2] Recommended Shows:");
-                sb.AppendLine($"      Path: {tvPath}");
-                sb.AppendLine("      Library Type: Shows");
-                sb.AppendLine($"      Suggested Name: \"{username}'s Recommended TV\"");
-                sb.AppendLine($"      User Display Name: \"{RecommendationLibraryProvisioningService.GetTvLibraryDisplayName()}\"");
+
+                if (tvEnabled)
+                {
+                    var tvPath = Path.Combine(_virtualLibraryBasePath, user.Id.ToString(), "tv");
+                    sb.AppendLine();
+                    sb.AppendLine("  [2] Recommended Shows:");
+                    sb.AppendLine($"      Path: {tvPath}");
+                    sb.AppendLine("      Library Type: Shows");
+                    sb.AppendLine($"      Suggested Name: \"{username}'s Recommended TV\"");
+                    sb.AppendLine($"      User Display Name: \"{RecommendationLibraryProvisioningService.GetTvLibraryDisplayName()}\"");
+                }
+
                 sb.AppendLine();
                 sb.AppendLine("  Setup Instructions:");
                 sb.AppendLine("    1. Go to Jellyfin Dashboard → Libraries → Add Media Library");
-                sb.AppendLine("    2. For EACH content type above, create a SEPARATE library:");
-                sb.AppendLine("       - Select content type (Movies or Shows)");
+                if (tvEnabled)
+                {
+                    sb.AppendLine("    2. For EACH content type above, create a SEPARATE library:");
+                    sb.AppendLine("       - Select content type (Movies or Shows)");
+                }
+                else
+                {
+                    sb.AppendLine("    2. Create a Movies library:");
+                    sb.AppendLine("       - Select content type (Movies)");
+                }
+
                 sb.AppendLine("       - Add the folder path shown above");
                 sb.AppendLine("       - Use the suggested library name");
                 sb.AppendLine("    3. Set library permissions:");

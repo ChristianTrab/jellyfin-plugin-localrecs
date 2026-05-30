@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using Jellyfin.Plugin.LocalRecs.Configuration;
 using Jellyfin.Plugin.LocalRecs.Models;
 using Jellyfin.Plugin.LocalRecs.VirtualLibrary;
 using MediaBrowser.Controller.Library;
@@ -56,19 +57,24 @@ namespace Jellyfin.Plugin.LocalRecs.Api
                 var users = _userManager.GetUsers().ToList();
                 var paths = new List<UserLibraryPathInfo>();
 
+                var config = Plugin.Instance?.Configuration ?? new Configuration.PluginConfiguration();
+                var tvEnabled = config.IsTvRecommendationsEnabled();
+
                 foreach (var user in users)
                 {
                     var username = user.Username ?? "Unknown";
                     var moviePath = _virtualLibraryManager.GetUserLibraryPath(user.Id, MediaType.Movie);
                     var tvPath = _virtualLibraryManager.GetUserLibraryPath(user.Id, MediaType.Series);
 
-                    // Check if both libraries exist by looking for virtual folders
+                    // Check if libraries exist by looking for virtual folders
                     var virtualFolders = _libraryManager.GetVirtualFolders();
                     bool movieLibraryExists = virtualFolders.Any(vf => vf.Locations.Any(loc =>
                         loc.Equals(moviePath, StringComparison.OrdinalIgnoreCase)));
                     bool tvLibraryExists = virtualFolders.Any(vf => vf.Locations.Any(loc =>
                         loc.Equals(tvPath, StringComparison.OrdinalIgnoreCase)));
-                    bool librariesCreated = movieLibraryExists && tvLibraryExists;
+                    bool librariesCreated = tvEnabled
+                        ? movieLibraryExists && tvLibraryExists
+                        : movieLibraryExists;
 
                     paths.Add(new UserLibraryPathInfo
                     {
@@ -80,7 +86,8 @@ namespace Jellyfin.Plugin.LocalRecs.Api
                         SuggestedTvLibraryName = RecommendationLibraryProvisioningService.GetSuggestedTvLibraryName(username),
                         MovieLibraryDisplayName = RecommendationLibraryProvisioningService.GetMovieLibraryDisplayName(),
                         TvLibraryDisplayName = RecommendationLibraryProvisioningService.GetTvLibraryDisplayName(),
-                        LibrariesCreated = librariesCreated
+                        LibrariesCreated = librariesCreated,
+                        EnableTvRecommendations = tvEnabled
                     });
                 }
 

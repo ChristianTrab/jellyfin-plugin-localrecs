@@ -29,7 +29,7 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Unit.VirtualLibrary
     public class RecommendationLibraryProvisioningServiceTests
     {
         [Fact]
-        public async Task EnsureLibrariesForUser_CreatesMissingMovieAndTvLibraries()
+        public async Task EnsureLibrariesForUser_CreatesMissingMovieLibrary()
         {
             using (UsePluginConfiguration(config => config.AutoCreateRecommendationLibraries = true))
             {
@@ -61,13 +61,42 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Unit.VirtualLibrary
 
                 mockLibraryManager.Verify(
                     m => m.AddVirtualFolder(
+                        It.IsAny<string>(),
+                        CollectionTypeOptions.tvshows,
+                        It.IsAny<LibraryOptions>(),
+                        It.IsAny<bool>()),
+                    Times.Never);
+            }
+        }
+
+        [Fact]
+        public async Task EnsureLibrariesForUser_CreatesMovieAndTvLibrariesWhenTvEnabled()
+        {
+            using (UsePluginConfiguration(config =>
+            {
+                config.AutoCreateRecommendationLibraries = true;
+                config.EnableTvRecommendations = true;
+                config.TvRecommendationCount = 25;
+            }))
+            {
+                var basePath = CreateBasePath();
+                var userId = Guid.NewGuid();
+                Directory.CreateDirectory(Path.Combine(basePath, userId.ToString(), "movies"));
+                Directory.CreateDirectory(Path.Combine(basePath, userId.ToString(), "tv"));
+
+                var mockLibraryManager = new Mock<ILibraryManager>();
+                mockLibraryManager.Setup(m => m.GetVirtualFolders()).Returns(new List<VirtualFolderInfo>());
+
+                var service = CreateService(basePath, mockLibraryManager.Object, Mock.Of<IUserManager>());
+                var user = new User("Alice", "Default", "Default") { Id = userId };
+
+                await service.EnsureLibrariesForUserAsync(user);
+
+                mockLibraryManager.Verify(
+                    m => m.AddVirtualFolder(
                         "Alice's Recommended TV",
                         CollectionTypeOptions.tvshows,
-                        It.Is<LibraryOptions>(options =>
-                            options.PathInfos != null &&
-                            options.PathInfos.Any(path => path.Path.EndsWith("tv", StringComparison.OrdinalIgnoreCase)) &&
-                            options.EnableAutomaticSeriesGrouping &&
-                            options.TypeOptions.Any(type => type.Type == "Series")),
+                        It.IsAny<LibraryOptions>(),
                         false),
                     Times.Once);
             }
@@ -133,7 +162,6 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Unit.VirtualLibrary
                     Times.Never);
 
                 movieCollectionFolder.Name.Should().Be("Recommended Movies");
-                tvCollectionFolder.Name.Should().Be("Recommended Shows");
             }
         }
 

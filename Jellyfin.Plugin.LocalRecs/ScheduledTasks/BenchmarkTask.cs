@@ -99,7 +99,7 @@ namespace Jellyfin.Plugin.LocalRecs.ScheduledTasks
 
                 var libraryStopwatch = Stopwatch.StartNew();
                 var library = await Task.Run(
-                    () => _libraryAnalysisService.GetAllMediaItems(),
+                    () => _libraryAnalysisService.GetAllMediaItems(config.IsTvRecommendationsEnabled()),
                     cancellationToken).ConfigureAwait(false);
                 libraryStopwatch.Stop();
 
@@ -261,27 +261,32 @@ namespace Jellyfin.Plugin.LocalRecs.ScheduledTasks
                         config.MovieRecommendationCount);
                     movieScoringStopwatch.Stop();
 
-                    var tvScoringStopwatch = Stopwatch.StartNew();
-                    var tvRecs = _recommendationEngine.GenerateRecommendations(
-                        testUserId,
-                        testProfile,
-                        embeddingsDict,
-                        metadata,
-                        config,
-                        MediaType.Series,
-                        config.TvRecommendationCount);
-                    tvScoringStopwatch.Stop();
-
-                    var movieCandidates = metadata.Values.Count(m => m.Type == MediaType.Movie);
-                    var tvCandidates = metadata.Values.Count(m => m.Type == MediaType.Series);
-
-                    results.AppendLine(string.Format("   Movie Candidates: {0:N0}", movieCandidates));
+                    results.AppendLine(string.Format("   Movie Candidates: {0:N0}", metadata.Values.Count(m => m.Type == MediaType.Movie)));
                     results.AppendLine(string.Format("   Movie Recs:       {0:N0}", movieRecs.Count));
                     results.AppendLine(string.Format("   Movie Time:       {0:N0} ms", movieScoringStopwatch.ElapsedMilliseconds));
                     results.AppendLine();
-                    results.AppendLine(string.Format("   TV Candidates:    {0:N0}", tvCandidates));
-                    results.AppendLine(string.Format("   TV Recs:          {0:N0}", tvRecs.Count));
-                    results.AppendLine(string.Format("   TV Time:          {0:N0} ms", tvScoringStopwatch.ElapsedMilliseconds));
+
+                    if (config.IsTvRecommendationsEnabled())
+                    {
+                        var tvScoringStopwatch = Stopwatch.StartNew();
+                        var tvRecs = _recommendationEngine.GenerateRecommendations(
+                            testUserId,
+                            testProfile,
+                            embeddingsDict,
+                            metadata,
+                            config,
+                            MediaType.Series,
+                            config.TvRecommendationCount);
+                        tvScoringStopwatch.Stop();
+
+                        results.AppendLine(string.Format("   TV Candidates:    {0:N0}", metadata.Values.Count(m => m.Type == MediaType.Series)));
+                        results.AppendLine(string.Format("   TV Recs:          {0:N0}", tvRecs.Count));
+                        results.AppendLine(string.Format("   TV Time:          {0:N0} ms", tvScoringStopwatch.ElapsedMilliseconds));
+                    }
+                    else
+                    {
+                        results.AppendLine("   TV Recommendations: disabled");
+                    }
                 }
                 else
                 {

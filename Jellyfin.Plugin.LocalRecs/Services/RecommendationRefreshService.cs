@@ -54,15 +54,15 @@ namespace Jellyfin.Plugin.LocalRecs.Services
         /// <returns>Tuple of embeddings dictionary and metadata dictionary.</returns>
         public (IReadOnlyDictionary<Guid, ItemEmbedding> Embeddings, IReadOnlyDictionary<Guid, MediaItemMetadata> Metadata) ComputeEmbeddings()
         {
+            var config = Plugin.Instance?.Configuration ?? new PluginConfiguration();
+            config.EnsureValid(_logger);
+
             // Get library metadata (always fresh)
-            var library = _libraryAnalysisService.GetAllMediaItems();
+            var library = _libraryAnalysisService.GetAllMediaItems(config.IsTvRecommendationsEnabled());
             var metadata = library.ToDictionary(m => m.Id);
 
             // Always compute fresh embeddings to reflect current watch history
             _logger.LogDebug("Computing fresh embeddings for {Count} items", library.Count);
-
-            var config = Plugin.Instance?.Configuration ?? new Configuration.PluginConfiguration();
-            config.EnsureValid(_logger);
 
             var vocabulary = _vocabularyBuilder.BuildVocabulary(
                 library,
@@ -108,21 +108,25 @@ namespace Jellyfin.Plugin.LocalRecs.Services
                     MediaType.Movie,
                     config.MovieRecommendationCount);
 
-                // Generate TV recommendations (will use cold-start if profile is null)
-                var tvRecs = _recommendationEngine.GenerateRecommendations(
-                    userId,
-                    profile,
-                    embeddings,
-                    metadata,
-                    config,
-                    MediaType.Series,
-                    config.TvRecommendationCount);
+                var tvRecs = new List<ScoredRecommendation>();
+                if (config.IsTvRecommendationsEnabled())
+                {
+                    tvRecs = _recommendationEngine.GenerateRecommendations(
+                        userId,
+                        profile,
+                        embeddings,
+                        metadata,
+                        config,
+                        MediaType.Series,
+                        config.TvRecommendationCount);
+                }
 
                 _logger.LogDebug(
-                    "Generated recommendations for user {UserId}: {MovieCount} movies, {TvCount} TV",
+                    "Generated recommendations for user {UserId}: {MovieCount} movies, {TvCount} TV (TV enabled: {TvEnabled})",
                     userId,
                     movieRecs.Count,
-                    tvRecs.Count);
+                    tvRecs.Count,
+                    config.IsTvRecommendationsEnabled());
 
                 return (movieRecs, tvRecs);
             }

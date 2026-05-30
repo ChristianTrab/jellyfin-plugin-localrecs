@@ -9,6 +9,14 @@ namespace Jellyfin.Plugin.LocalRecs.Configuration
     public static class PluginConfigurationExtensions
     {
         /// <summary>
+        /// Returns true when TV recommendations should be generated and synced.
+        /// </summary>
+        /// <param name="config">The plugin configuration.</param>
+        /// <returns>True when TV recommendations are enabled and count is positive.</returns>
+        public static bool IsTvRecommendationsEnabled(this PluginConfiguration config) =>
+            config.EnableTvRecommendations && config.TvRecommendationCount > 0;
+
+        /// <summary>
         /// Validates configuration and resets invalid values to safe defaults.
         /// </summary>
         /// <param name="config">The configuration to normalize.</param>
@@ -34,7 +42,7 @@ namespace Jellyfin.Plugin.LocalRecs.Configuration
 
             if (config.TvRecommendationCount < 0 || config.TvRecommendationCount > PluginConfiguration.MaxRecommendationCount)
             {
-                config.TvRecommendationCount = 25;
+                config.TvRecommendationCount = 0;
             }
 
             if (config.FavoriteBoost < 0)

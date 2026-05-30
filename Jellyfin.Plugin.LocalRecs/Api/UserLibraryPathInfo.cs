@@ -51,5 +51,10 @@ namespace Jellyfin.Plugin.LocalRecs.Api
         /// Gets or sets a value indicating whether the libraries are set up.
         /// </summary>
         public bool LibrariesCreated { get; set; }
+
+        /// <summary>
+        /// Gets or sets a value indicating whether TV recommendations are enabled in plugin settings.
+        /// </summary>
+        public bool EnableTvRecommendations { get; set; }
     }
 }

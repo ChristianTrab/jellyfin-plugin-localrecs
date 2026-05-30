@@ -19,7 +19,8 @@ namespace Jellyfin.Plugin.LocalRecs.Configuration
         public PluginConfiguration()
         {
             MovieRecommendationCount = 25;
-            TvRecommendationCount = 25;
+            TvRecommendationCount = 0;
+            EnableTvRecommendations = false;
             FavoriteBoost = 2.0;
             RewatchBoost = 1.5;
             RecencyDecayHalfLifeDays = 365.0;
@@ -42,6 +43,12 @@ namespace Jellyfin.Plugin.LocalRecs.Configuration
         /// Gets or sets the number of TV recommendations to generate per user.
         /// </summary>
         public int TvRecommendationCount { get; set; }
+
+        /// <summary>
+        /// Gets or sets a value indicating whether TV show recommendations are enabled.
+        /// When false, only movies are recommended and TV virtual folders are cleared on refresh.
+        /// </summary>
+        public bool EnableTvRecommendations { get; set; }
 
         /// <summary>
         /// Gets or sets the boost multiplier for favorite items.

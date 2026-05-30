@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using Jellyfin.Data.Enums;
+using Jellyfin.Plugin.LocalRecs.Configuration;
 using Jellyfin.Plugin.LocalRecs.Models;
 using Jellyfin.Plugin.LocalRecs.VirtualLibrary;
 using MediaBrowser.Controller.Entities;
@@ -46,6 +47,17 @@ namespace Jellyfin.Plugin.LocalRecs.Services
         /// <returns>List of media item metadata.</returns>
         public IReadOnlyList<MediaItemMetadata> GetAllMediaItems()
         {
+            var includeSeries = Plugin.Instance?.Configuration?.IsTvRecommendationsEnabled() == true;
+            return GetAllMediaItems(includeSeries);
+        }
+
+        /// <summary>
+        /// Gets movies and optionally TV series from the library as MediaItemMetadata objects.
+        /// </summary>
+        /// <param name="includeSeries">Whether to include TV series.</param>
+        /// <returns>List of media item metadata.</returns>
+        public IReadOnlyList<MediaItemMetadata> GetAllMediaItems(bool includeSeries)
+        {
             try
             {
                 var items = new List<MediaItemMetadata>();
@@ -67,20 +79,25 @@ namespace Jellyfin.Plugin.LocalRecs.Services
                     }
                 }
 
-                // Get all TV series
-                var series = _libraryManager.GetItemList(new InternalItemsQuery
+                var seriesCount = 0;
+                if (includeSeries)
                 {
-                    IncludeItemTypes = new[] { BaseItemKind.Series },
-                    IsVirtualItem = false,
-                    Recursive = true
-                });
-
-                foreach (var show in series.OfType<Series>())
-                {
-                    var metadata = ConvertToMetadata(show, Models.MediaType.Series);
-                    if (metadata != null)
+                    var series = _libraryManager.GetItemList(new InternalItemsQuery
                     {
-                        items.Add(metadata);
+                        IncludeItemTypes = new[] { BaseItemKind.Series },
+                        IsVirtualItem = false,
+                        Recursive = true
+                    });
+
+                    seriesCount = series.Count;
+
+                    foreach (var show in series.OfType<Series>())
+                    {
+                        var metadata = ConvertToMetadata(show, Models.MediaType.Series);
+                        if (metadata != null)
+                        {
+                            items.Add(metadata);
+                        }
                     }
                 }
 
@@ -88,7 +105,7 @@ namespace Jellyfin.Plugin.LocalRecs.Services
                     "Retrieved {Count} media items from library ({Movies} movies, {Series} series)",
                     items.Count,
                     movies.Count,
-                    series.Count);
+                    seriesCount);
 
                 return items;
             }

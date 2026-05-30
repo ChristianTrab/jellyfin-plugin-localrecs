@@ -287,25 +287,28 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
                     .ConfigureAwait(false);
             }
 
-            if (!userLibraries.ContainsKey(MediaType.Series))
+            if (config.IsTvRecommendationsEnabled())
             {
-                await CreateLibraryAsync(
-                        user,
-                        MediaType.Series,
-                        GetSuggestedTvLibraryName(username),
-                        GetTvLibraryDisplayName(),
-                        CollectionTypeOptions.tvshows,
-                        refreshLibrary,
-                        cancellationToken)
-                    .ConfigureAwait(false);
-            }
-            else
-            {
-                await ApplyLibraryDisplayNameAsync(
-                        userLibraries[MediaType.Series].Path,
-                        GetTvLibraryDisplayName(),
-                        cancellationToken)
-                    .ConfigureAwait(false);
+                if (!userLibraries.ContainsKey(MediaType.Series))
+                {
+                    await CreateLibraryAsync(
+                            user,
+                            MediaType.Series,
+                            GetSuggestedTvLibraryName(username),
+                            GetTvLibraryDisplayName(),
+                            CollectionTypeOptions.tvshows,
+                            refreshLibrary,
+                            cancellationToken)
+                        .ConfigureAwait(false);
+                }
+                else
+                {
+                    await ApplyLibraryDisplayNameAsync(
+                            userLibraries[MediaType.Series].Path,
+                            GetTvLibraryDisplayName(),
+                            cancellationToken)
+                        .ConfigureAwait(false);
+                }
             }
         }
 

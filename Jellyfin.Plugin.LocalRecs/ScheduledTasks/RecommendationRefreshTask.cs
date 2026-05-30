@@ -117,13 +117,24 @@ namespace Jellyfin.Plugin.LocalRecs.ScheduledTasks
                             var moviePath = _virtualLibraryManager.GetUserLibraryPath(user.Id, MediaType.Movie);
                             var movieEntries = VirtualLibraryManager.CountRecommendationEntries(moviePath);
 
-                            _virtualLibraryManager.SyncRecommendations(
-                                user.Id,
-                                recs.Tv,
-                                MediaType.Series);
+                            var tvEntries = 0;
+                            if (config.IsTvRecommendationsEnabled())
+                            {
+                                _virtualLibraryManager.SyncRecommendations(
+                                    user.Id,
+                                    recs.Tv,
+                                    MediaType.Series);
 
-                            var tvPath = _virtualLibraryManager.GetUserLibraryPath(user.Id, MediaType.Series);
-                            var tvEntries = VirtualLibraryManager.CountRecommendationEntries(tvPath);
+                                var tvPath = _virtualLibraryManager.GetUserLibraryPath(user.Id, MediaType.Series);
+                                tvEntries = VirtualLibraryManager.CountRecommendationEntries(tvPath);
+                            }
+                            else
+                            {
+                                _virtualLibraryManager.SyncRecommendations(
+                                    user.Id,
+                                    Array.Empty<ScoredRecommendation>(),
+                                    MediaType.Series);
+                            }
 
                             successfulUsers++;
                             _logger.LogInformation(
@@ -142,12 +153,12 @@ namespace Jellyfin.Plugin.LocalRecs.ScheduledTasks
                                     moviePath);
                             }
 
-                            if (tvEntries == 0 && recs.Tv.Count > 0)
+                            if (config.IsTvRecommendationsEnabled() && tvEntries == 0 && recs.Tv.Count > 0)
                             {
                                 _logger.LogWarning(
                                     "No TV entries created for {UserName} at {Path}. Check Jellyfin logs for symlink errors.",
                                     user.Username,
-                                    tvPath);
+                                    _virtualLibraryManager.GetUserLibraryPath(user.Id, MediaType.Series));
                             }
                         }
                     }
@@ -223,11 +234,16 @@ namespace Jellyfin.Plugin.LocalRecs.ScheduledTasks
 
         private void NotifyVirtualLibraryPathsChanged(IEnumerable<Guid> userIds)
         {
+            var config = Plugin.Instance?.Configuration ?? new PluginConfiguration();
             var notifiedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
             foreach (var userId in userIds)
             {
-                foreach (var mediaType in new[] { MediaType.Movie, MediaType.Series })
+                var mediaTypes = config.IsTvRecommendationsEnabled()
+                    ? new[] { MediaType.Movie, MediaType.Series }
+                    : new[] { MediaType.Movie };
+
+                foreach (var mediaType in mediaTypes)
                 {
                     var path = _virtualLibraryManager.GetUserLibraryPath(userId, mediaType);
                     if (!Directory.Exists(path) || !notifiedPaths.Add(path))
