@@ -80,7 +80,7 @@
                                 <input is="emby-checkbox" type="checkbox" id="autoCreateRecommendationLibraries" name="autoCreateRecommendationLibraries" />
                                 <span>Automatically create recommendation libraries</span>
                             </label>
-                            <div class="fieldDescription">Creates a Movies and Shows library for each user on startup and when users are added (default: enabled)</div>
+                            <div class="fieldDescription">Creates a Movies and Shows library for each user on startup and when users are added (default: disabled)</div>
                         </div>
 
                         <div class="checkboxContainer checkboxContainer-withDescription">
@@ -88,7 +88,7 @@
                                 <input is="emby-checkbox" type="checkbox" id="autoManageLibraryPermissions" name="autoManageLibraryPermissions" />
                                 <span>Automatically manage library permissions</span>
                             </label>
-                            <div class="fieldDescription">Grants each user access to all libraries except other users' recommendation libraries (default: enabled)</div>
+                            <div class="fieldDescription">Grants each user access to all libraries except other users' recommendation libraries (default: disabled)</div>
                         </div>
 
                         <div class="checkboxContainer checkboxContainer-withDescription">
@@ -247,7 +247,7 @@
                             var users = results[0];
                             var config = results[1];
 
-                            if (config.AutoCreateRecommendationLibraries !== false) {
+                            if (config.AutoCreateRecommendationLibraries === true) {
                                 container.innerHTML = '<div style="background: rgba(76, 175, 80, 0.1); padding: 1.5em; border-left: 4px solid #4caf50;">' +
                                     '<h3 style="margin-top: 0;">Automatic Library Setup Enabled</h3>' +
                                     '<p>Recommendation libraries and permissions are managed automatically for each user.</p>' +
@@ -468,8 +468,8 @@
                             page.querySelector('#maxVocabularyTags').value = config.MaxVocabularyTags || 500;
                             page.querySelector('#enableRatingProximity').checked = config.EnableRatingProximity || false;
                             page.querySelector('#ratingProximityWeight').value = config.RatingProximityWeight || 0.2;
-                            page.querySelector('#autoCreateRecommendationLibraries').checked = config.AutoCreateRecommendationLibraries !== false;
-                            page.querySelector('#autoManageLibraryPermissions').checked = config.AutoManageLibraryPermissions !== false;
+                            page.querySelector('#autoCreateRecommendationLibraries').checked = config.AutoCreateRecommendationLibraries === true;
+                            page.querySelector('#autoManageLibraryPermissions').checked = config.AutoManageLibraryPermissions === true;
 
                             self.updateFieldVisibility(page);
                             Dashboard.hideLoadingMsg();

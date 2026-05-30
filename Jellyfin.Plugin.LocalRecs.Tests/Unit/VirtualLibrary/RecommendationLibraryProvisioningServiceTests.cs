@@ -2,16 +2,22 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Threading.Tasks;
 using FluentAssertions;
 using Jellyfin.Data;
 using Jellyfin.Database.Implementations.Entities;
 using Jellyfin.Database.Implementations.Enums;
+using Jellyfin.Plugin.LocalRecs;
+using Jellyfin.Plugin.LocalRecs.Configuration;
 using Jellyfin.Plugin.LocalRecs.Models;
 using Jellyfin.Plugin.LocalRecs.VirtualLibrary;
+using MediaBrowser.Common.Configuration;
+using MediaBrowser.Common.Plugins;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Model.Configuration;
 using MediaBrowser.Model.Entities;
+using MediaBrowser.Model.Serialization;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using Xunit;
@@ -23,6 +29,8 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Unit.VirtualLibrary
         [Fact]
         public async Task EnsureLibrariesForUser_CreatesMissingMovieAndTvLibraries()
         {
+            using (UsePluginConfiguration(config => config.AutoCreateRecommendationLibraries = true))
+            {
             var basePath = CreateBasePath();
             var userId = Guid.NewGuid();
             Directory.CreateDirectory(Path.Combine(basePath, userId.ToString(), "movies"));
@@ -55,11 +63,14 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Unit.VirtualLibrary
                         options.PathInfos.Any(path => path.Path.EndsWith("tv", StringComparison.OrdinalIgnoreCase))),
                     false),
                 Times.Once);
+            }
         }
 
         [Fact]
         public async Task EnsureLibrariesForUser_SkipsExistingLibraries()
         {
+            using (UsePluginConfiguration(config => config.AutoCreateRecommendationLibraries = true))
+            {
             var basePath = CreateBasePath();
             var userId = Guid.NewGuid();
             var moviePath = Path.Combine(basePath, userId.ToString(), "movies");
@@ -98,11 +109,14 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Unit.VirtualLibrary
                     It.IsAny<LibraryOptions>(),
                     It.IsAny<bool>()),
                 Times.Never);
+            }
         }
 
         [Fact]
         public async Task SyncPermissionsForAllUsers_BlocksOtherUsersRecommendationLibraries()
         {
+            using (UsePluginConfiguration(config => config.AutoManageLibraryPermissions = true))
+            {
             var basePath = CreateBasePath();
             var user1Id = Guid.NewGuid();
             var user2Id = Guid.NewGuid();
@@ -152,11 +166,14 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Unit.VirtualLibrary
             user2.GetPreference(PreferenceKind.BlockedMediaFolders)
                 .Should().Contain(user1MovieFolderId)
                 .And.NotContain(user2MovieFolderId);
+            }
         }
 
         [Fact]
         public async Task RemoveLibrariesForUser_RemovesMatchingVirtualFolders()
         {
+            using (UsePluginConfiguration(config => config.AutoCreateRecommendationLibraries = true))
+            {
             var basePath = CreateBasePath();
             var userId = Guid.NewGuid();
             var moviePath = Path.Combine(basePath, userId.ToString(), "movies");
@@ -190,6 +207,49 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Unit.VirtualLibrary
 
             mockLibraryManager.Verify(m => m.RemoveVirtualFolder("Alice's Recommended Movies", false), Times.Once);
             mockLibraryManager.Verify(m => m.RemoveVirtualFolder("Alice's Recommended TV", false), Times.Once);
+            }
+        }
+
+        private static IDisposable UsePluginConfiguration(Action<PluginConfiguration> configure)
+        {
+            var previous = Plugin.Instance;
+            var config = new PluginConfiguration();
+            configure(config);
+
+            var configRoot = Path.Combine(Path.GetTempPath(), "jf-localrecs-plugin-config", Guid.NewGuid().ToString());
+            Directory.CreateDirectory(configRoot);
+
+            var appPaths = new Mock<IApplicationPaths>();
+            appPaths.Setup(p => p.PluginsPath).Returns(configRoot);
+            appPaths.Setup(p => p.PluginConfigurationsPath).Returns(configRoot);
+
+            var plugin = new Plugin(appPaths.Object, Mock.Of<IXmlSerializer>());
+            typeof(BasePlugin<PluginConfiguration>)
+                .GetProperty(nameof(BasePlugin<PluginConfiguration>.Configuration), BindingFlags.Public | BindingFlags.Instance)!
+                .SetValue(plugin, config);
+            SetPluginInstance(plugin);
+            return new RestorePluginInstance(previous);
+        }
+
+        private static void SetPluginInstance(Plugin? instance)
+        {
+            typeof(Plugin).GetProperty(nameof(Plugin.Instance), BindingFlags.Public | BindingFlags.Static)!
+                .SetValue(null, instance);
+        }
+
+        private sealed class RestorePluginInstance : IDisposable
+        {
+            private readonly Plugin? _previous;
+
+            public RestorePluginInstance(Plugin? previous)
+            {
+                _previous = previous;
+            }
+
+            public void Dispose()
+            {
+                SetPluginInstance(_previous);
+            }
         }
 
         private static RecommendationLibraryProvisioningService CreateService(

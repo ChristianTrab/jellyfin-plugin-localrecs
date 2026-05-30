@@ -297,10 +297,7 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
                 return;
             }
 
-            var options = new LibraryOptions
-            {
-                PathInfos = new[] { new MediaPathInfo(libraryPath) }
-            };
+            var options = RecommendationLibraryOptions.Create(libraryPath);
 
             try
             {

@@ -25,7 +25,6 @@ namespace Jellyfin.Plugin.LocalRecs.ScheduledTasks
         private readonly RecommendationRefreshService _refreshService;
         private readonly VirtualLibraryManager _virtualLibraryManager;
         private readonly ILibraryMonitor _libraryMonitor;
-        private readonly ILibraryManager _libraryManager;
 
         /// <summary>
         /// Initializes a new instance of the <see cref="RecommendationRefreshTask"/> class.
@@ -35,21 +34,18 @@ namespace Jellyfin.Plugin.LocalRecs.ScheduledTasks
         /// <param name="refreshService">Recommendation refresh service.</param>
         /// <param name="virtualLibraryManager">Virtual library manager.</param>
         /// <param name="libraryMonitor">Library monitor for notifying Jellyfin of filesystem changes.</param>
-        /// <param name="libraryManager">Library manager for queuing library scans.</param>
         public RecommendationRefreshTask(
             ILogger<RecommendationRefreshTask> logger,
             IUserManager userManager,
             RecommendationRefreshService refreshService,
             VirtualLibraryManager virtualLibraryManager,
-            ILibraryMonitor libraryMonitor,
-            ILibraryManager libraryManager)
+            ILibraryMonitor libraryMonitor)
         {
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _userManager = userManager ?? throw new ArgumentNullException(nameof(userManager));
             _refreshService = refreshService ?? throw new ArgumentNullException(nameof(refreshService));
             _virtualLibraryManager = virtualLibraryManager ?? throw new ArgumentNullException(nameof(virtualLibraryManager));
             _libraryMonitor = libraryMonitor ?? throw new ArgumentNullException(nameof(libraryMonitor));
-            _libraryManager = libraryManager ?? throw new ArgumentNullException(nameof(libraryManager));
         }
 
         /// <inheritdoc />
@@ -174,8 +170,11 @@ namespace Jellyfin.Plugin.LocalRecs.ScheduledTasks
 
                 await Task.Delay(TimeSpan.FromSeconds(2), cancellationToken).ConfigureAwait(false);
 
-                _libraryManager.QueueLibraryScan();
-                _logger.LogInformation("Queued a full library scan so recommendation libraries pick up new folder symlinks.");
+                // Incremental scan via ReportFileSystemChanged above is enough for recommendation folders.
+                // A full library scan re-processes every library and causes heavy log noise (TVDB, people
+                // images, UserData reattach) when many users' recommendation libraries update at once.
+                _logger.LogInformation(
+                    "Recommendation symlinks updated. Jellyfin will scan the changed virtual library folders incrementally.");
 
                 progress?.Report(95);
 

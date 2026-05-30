@@ -29,8 +29,8 @@ namespace Jellyfin.Plugin.LocalRecs.Configuration
             MaxVocabularyTags = 500;
             EnableRatingProximity = true;
             RatingProximityWeight = 0.2;
-            AutoCreateRecommendationLibraries = true;
-            AutoManageLibraryPermissions = true;
+            AutoCreateRecommendationLibraries = false;
+            AutoManageLibraryPermissions = false;
         }
 
         /// <summary>

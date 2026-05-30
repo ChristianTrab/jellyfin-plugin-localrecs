@@ -472,7 +472,7 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
         private int TryCreateSeriesWrapperWithMetadata(string seriesPath, Series series, string seriesSourceDir)
         {
             Directory.CreateDirectory(seriesPath);
-            WriteTvShowNfo(seriesPath, series);
+            WriteTvShowNfo(seriesPath, series, seriesSourceDir);
 
             var seasonLinks = 0;
             foreach (var sourceSubDir in Directory.EnumerateDirectories(seriesSourceDir))
@@ -692,10 +692,26 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
 
         /// <summary>
         /// Writes tvshow.nfo with provider IDs so Jellyfin identifies the series before remote lookups.
+        /// Copies the source library's tvshow.nfo when present for richer local metadata.
         /// </summary>
-        private void WriteTvShowNfo(string seriesPath, Series series)
+        private void WriteTvShowNfo(string seriesPath, Series series, string seriesSourceDir)
         {
             var nfoPath = Path.Combine(seriesPath, "tvshow.nfo");
+            var sourceNfoPath = Path.Combine(seriesSourceDir, "tvshow.nfo");
+
+            if (File.Exists(sourceNfoPath))
+            {
+                try
+                {
+                    File.Copy(sourceNfoPath, nfoPath, overwrite: true);
+                    return;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to copy tvshow.nfo from {SourcePath}, generating minimal nfo", sourceNfoPath);
+                }
+            }
+
             var sb = new StringBuilder();
             sb.AppendLine("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>");
             sb.AppendLine("<tvshow>");
