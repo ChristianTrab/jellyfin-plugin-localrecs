@@ -33,9 +33,19 @@ namespace Jellyfin.Plugin.LocalRecs.Api
         public string SuggestedMovieLibraryName { get; set; } = string.Empty;
 
         /// <summary>
-        /// Gets or sets the suggested TV library name.
+        /// Gets or sets the suggested TV library name (internal folder name).
         /// </summary>
         public string SuggestedTvLibraryName { get; set; } = string.Empty;
+
+        /// <summary>
+        /// Gets or sets the user-facing movie library display name.
+        /// </summary>
+        public string MovieLibraryDisplayName { get; set; } = string.Empty;
+
+        /// <summary>
+        /// Gets or sets the user-facing TV library display name.
+        /// </summary>
+        public string TvLibraryDisplayName { get; set; } = string.Empty;
 
         /// <summary>
         /// Gets or sets a value indicating whether the libraries are set up.

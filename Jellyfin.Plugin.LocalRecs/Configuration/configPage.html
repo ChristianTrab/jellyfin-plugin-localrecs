@@ -324,6 +324,8 @@
                     var tvPath = this.escapeHtml(user.TvLibraryPath);
                     var suggestedMovieName = this.escapeHtml(user.SuggestedMovieLibraryName);
                     var suggestedTvName = this.escapeHtml(user.SuggestedTvLibraryName);
+                    var movieDisplayName = this.escapeHtml(user.MovieLibraryDisplayName || 'Recommended Movies');
+                    var tvDisplayName = this.escapeHtml(user.TvLibraryDisplayName || 'Recommended Shows');
                     var userIdForButton = user.UserId.replace(/-/g, '');
                     
                     var html = '<div class="listItem" style="margin: 1em 0; padding: 1.5em; border: 1px solid rgba(255,255,255,0.1); background: rgba(255,255,255,0.02);">';
@@ -339,20 +341,20 @@
                     html += '<input type="text" class="emby-input" readonly value="' + moviePath + '" style="flex: 1; font-family: monospace;" />';
                     html += '<button is="emby-button" type="button" class="raised copy-button" data-path="' + moviePath + '" style="min-width: 80px;">Copy</button>';
                     html += '</div>';
-                    html += '<div class="fieldDescription" style="margin-top: 0.5em;">Suggested Library Name: <strong>' + suggestedMovieName + '</strong></div>';
+                    html += '<div class="fieldDescription" style="margin-top: 0.5em;">Internal library name: <strong>' + suggestedMovieName + '</strong><br/>User display name: <strong>' + movieDisplayName + '</strong></div>';
                     html += '</div>';
                     html += '</div>';
                     
                     // TV library section
                     html += '<div style="margin: 1.5em 0;">';
-                    html += '<h4 style="margin-bottom: 0.5em;">Recommended TV Library</h4>';
+                    html += '<h4 style="margin-bottom: 0.5em;">Recommended Shows Library</h4>';
                     html += '<div class="inputContainer">';
                     html += '<label class="inputLabel inputLabelUnfocused">Folder Path:</label>';
                     html += '<div style="display: flex; gap: 0.5em; align-items: center;">';
                     html += '<input type="text" class="emby-input" readonly value="' + tvPath + '" style="flex: 1; font-family: monospace;" />';
                     html += '<button is="emby-button" type="button" class="raised copy-button" data-path="' + tvPath + '" style="min-width: 80px;">Copy</button>';
                     html += '</div>';
-                    html += '<div class="fieldDescription" style="margin-top: 0.5em;">Suggested Library Name: <strong>' + suggestedTvName + '</strong></div>';
+                    html += '<div class="fieldDescription" style="margin-top: 0.5em;">Internal library name: <strong>' + suggestedTvName + '</strong><br/>User display name: <strong>' + tvDisplayName + '</strong></div>';
                     html += '</div>';
                     html += '</div>';
                     

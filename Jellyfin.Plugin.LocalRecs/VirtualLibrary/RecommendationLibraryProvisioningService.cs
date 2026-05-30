@@ -9,7 +9,9 @@ using Jellyfin.Database.Implementations.Entities;
 using Jellyfin.Database.Implementations.Enums;
 using Jellyfin.Plugin.LocalRecs.Configuration;
 using Jellyfin.Plugin.LocalRecs.Models;
+using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
+using MediaBrowser.Controller.Providers;
 using MediaBrowser.Model.Configuration;
 using MediaBrowser.Model.Entities;
 using Microsoft.Extensions.Logging;
@@ -47,10 +49,10 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
         }
 
         /// <summary>
-        /// Gets the suggested movie library display name for a user.
+        /// Gets the internal movie library folder name for a user (used on disk and in admin).
         /// </summary>
         /// <param name="username">The Jellyfin username.</param>
-        /// <returns>Suggested library name.</returns>
+        /// <returns>Internal library folder name.</returns>
         public static string GetSuggestedMovieLibraryName(string username)
         {
             var displayName = string.IsNullOrWhiteSpace(username) ? "Unknown" : username.Trim();
@@ -58,15 +60,27 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
         }
 
         /// <summary>
-        /// Gets the suggested TV library display name for a user.
+        /// Gets the internal TV library folder name for a user (used on disk and in admin).
         /// </summary>
         /// <param name="username">The Jellyfin username.</param>
-        /// <returns>Suggested library name.</returns>
+        /// <returns>Internal library folder name.</returns>
         public static string GetSuggestedTvLibraryName(string username)
         {
             var displayName = string.IsNullOrWhiteSpace(username) ? "Unknown" : username.Trim();
             return $"{displayName}'s Recommended TV";
         }
+
+        /// <summary>
+        /// Gets the user-facing movie library display name.
+        /// </summary>
+        /// <returns>Movie library display name.</returns>
+        public static string GetMovieLibraryDisplayName() => "Recommended Movies";
+
+        /// <summary>
+        /// Gets the user-facing TV library display name.
+        /// </summary>
+        /// <returns>TV library display name.</returns>
+        public static string GetTvLibraryDisplayName() => "Recommended Shows";
 
         /// <summary>
         /// Ensures recommendation libraries exist for all users and syncs permissions when enabled in config.
@@ -258,8 +272,17 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
                         user,
                         MediaType.Movie,
                         GetSuggestedMovieLibraryName(username),
+                        GetMovieLibraryDisplayName(),
                         CollectionTypeOptions.movies,
                         refreshLibrary,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            else
+            {
+                await ApplyLibraryDisplayNameAsync(
+                        userLibraries[MediaType.Movie].Path,
+                        GetMovieLibraryDisplayName(),
                         cancellationToken)
                     .ConfigureAwait(false);
             }
@@ -270,8 +293,17 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
                         user,
                         MediaType.Series,
                         GetSuggestedTvLibraryName(username),
+                        GetTvLibraryDisplayName(),
                         CollectionTypeOptions.tvshows,
                         refreshLibrary,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            else
+            {
+                await ApplyLibraryDisplayNameAsync(
+                        userLibraries[MediaType.Series].Path,
+                        GetTvLibraryDisplayName(),
                         cancellationToken)
                     .ConfigureAwait(false);
             }
@@ -281,6 +313,7 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
             User user,
             MediaType mediaType,
             string libraryName,
+            string libraryDisplayName,
             CollectionTypeOptions collectionType,
             bool refreshLibrary,
             CancellationToken cancellationToken)
@@ -297,7 +330,9 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
                 return;
             }
 
-            var options = RecommendationLibraryOptions.Create(libraryPath);
+            var options = mediaType == MediaType.Movie
+                ? RecommendationLibraryOptions.CreateForMovies(libraryPath)
+                : RecommendationLibraryOptions.CreateForTvShows(libraryPath);
 
             try
             {
@@ -305,9 +340,13 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
                     .AddVirtualFolder(libraryName, collectionType, options, refreshLibrary)
                     .ConfigureAwait(false);
 
+                await ApplyLibraryDisplayNameAsync(libraryPath, libraryDisplayName, cancellationToken)
+                    .ConfigureAwait(false);
+
                 _logger.LogInformation(
-                    "Created recommendation library {LibraryName} ({MediaType}) for user {Username} ({UserId}) at {Path}",
+                    "Created recommendation library {LibraryName} (display: {DisplayName}, {MediaType}) for user {Username} ({UserId}) at {Path}",
                     libraryName,
+                    libraryDisplayName,
                     mediaType,
                     user.Username,
                     user.Id,
@@ -323,6 +362,58 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
                     user.Username,
                     user.Id);
             }
+        }
+
+        private async Task ApplyLibraryDisplayNameAsync(
+            string libraryMediaPath,
+            string displayName,
+            CancellationToken cancellationToken)
+        {
+            var collectionFolder = FindCollectionFolderByMediaPath(libraryMediaPath);
+            if (collectionFolder == null)
+            {
+                return;
+            }
+
+            if (string.Equals(collectionFolder.Name, displayName, StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            collectionFolder.Name = displayName;
+            var parent = _libraryManager.GetItemById(collectionFolder.ParentId) ?? _libraryManager.GetUserRootFolder();
+
+            await _libraryManager
+                .UpdateItemAsync(collectionFolder, parent, ItemUpdateType.MetadataEdit, cancellationToken)
+                .ConfigureAwait(false);
+
+            _logger.LogDebug(
+                "Set recommendation library display name to {DisplayName} for folder at {Path}",
+                displayName,
+                libraryMediaPath);
+        }
+
+        private CollectionFolder? FindCollectionFolderByMediaPath(string libraryMediaPath)
+        {
+            foreach (var folderInfo in _libraryManager.GetVirtualFolders())
+            {
+                if (folderInfo.Locations == null
+                    || !folderInfo.Locations.Any(location =>
+                        string.Equals(location, libraryMediaPath, StringComparison.OrdinalIgnoreCase)))
+                {
+                    continue;
+                }
+
+                if (string.IsNullOrEmpty(folderInfo.ItemId))
+                {
+                    return null;
+                }
+
+                var folderId = Guid.Parse(folderInfo.ItemId);
+                return _libraryManager.GetItemById<CollectionFolder>(folderId);
+            }
+
+            return null;
         }
 
         private Dictionary<Guid, Dictionary<MediaType, RecommendationLibraryInfo>> GetRecommendationLibrariesByUserId()

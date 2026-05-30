@@ -316,6 +316,43 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Unit.VirtualLibrary
             VirtualLibraryPaths.IsSymbolicLink(Path.Combine(seriesFolder, "S01")).Should().BeTrue();
         }
 
+        [SkippableFact]
+        public void SyncRecommendations_CreatesSeriesWrapperForFlatEpisodeFiles()
+        {
+            Skip.IfNot(CanCreateSymlinks());
+
+            var userId = Guid.NewGuid();
+            _manager.EnsureUserDirectoriesExist(userId, "TestUser");
+
+            var seriesSourceDir = Path.Combine(_testBasePath, "source", "Darna");
+            Directory.CreateDirectory(seriesSourceDir);
+            File.WriteAllText(Path.Combine(seriesSourceDir, "Darna S01E01.mkv"), "episode");
+            File.WriteAllText(Path.Combine(seriesSourceDir, "tvshow.nfo"), "<tvshow><tmdbid>99999</tmdbid></tvshow>");
+
+            var seriesId = Guid.NewGuid();
+            var series = new Series
+            {
+                Id = seriesId,
+                Name = "Mars Ravelo's Darna",
+                Path = seriesSourceDir,
+                ProductionYear = 2022,
+                ProviderIds = new Dictionary<string, string> { { "Tmdb", "99999" } }
+            };
+
+            _mockLibraryManager.Setup(m => m.GetItemById(seriesId)).Returns(series);
+
+            _manager.SyncRecommendations(
+                userId,
+                new[] { new ScoredRecommendation(seriesId, 0.88f) },
+                MediaType.Series);
+
+            var seriesFolder = Directory.GetDirectories(_manager.GetUserLibraryPath(userId, MediaType.Series)).Single();
+            VirtualLibraryPaths.IsSymbolicLink(seriesFolder).Should().BeFalse();
+            File.Exists(Path.Combine(seriesFolder, "tvshow.nfo")).Should().BeTrue();
+            File.Exists(Path.Combine(seriesFolder, "Darna S01E01.mkv")).Should().BeTrue();
+            VirtualLibraryPaths.IsSymbolicLink(Path.Combine(seriesFolder, "Darna S01E01.mkv")).Should().BeTrue();
+        }
+
         [Fact]
         public void DeleteUserDirectories_RemovesUserDirectory()
         {

@@ -217,11 +217,13 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
                 sb.AppendLine($"      Path: {moviePath}");
                 sb.AppendLine("      Library Type: Movies");
                 sb.AppendLine($"      Suggested Name: \"{username}'s Recommended Movies\"");
+                sb.AppendLine($"      User Display Name: \"{RecommendationLibraryProvisioningService.GetMovieLibraryDisplayName()}\"");
                 sb.AppendLine();
-                sb.AppendLine("  [2] Recommended TV:");
+                sb.AppendLine("  [2] Recommended Shows:");
                 sb.AppendLine($"      Path: {tvPath}");
                 sb.AppendLine("      Library Type: Shows");
                 sb.AppendLine($"      Suggested Name: \"{username}'s Recommended TV\"");
+                sb.AppendLine($"      User Display Name: \"{RecommendationLibraryProvisioningService.GetTvLibraryDisplayName()}\"");
                 sb.AppendLine();
                 sb.AppendLine("  Setup Instructions:");
                 sb.AppendLine("    1. Go to Jellyfin Dashboard → Libraries → Add Media Library");

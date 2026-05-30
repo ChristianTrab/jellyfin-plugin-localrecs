@@ -14,7 +14,9 @@ using Jellyfin.Plugin.LocalRecs.Models;
 using Jellyfin.Plugin.LocalRecs.VirtualLibrary;
 using MediaBrowser.Common.Configuration;
 using MediaBrowser.Common.Plugins;
+using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
+using MediaBrowser.Controller.Providers;
 using MediaBrowser.Model.Configuration;
 using MediaBrowser.Model.Entities;
 using MediaBrowser.Model.Serialization;
@@ -50,7 +52,10 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Unit.VirtualLibrary
                         CollectionTypeOptions.movies,
                         It.Is<LibraryOptions>(options =>
                             options.PathInfos != null &&
-                            options.PathInfos.Any(path => path.Path.EndsWith("movies", StringComparison.OrdinalIgnoreCase))),
+                            options.PathInfos.Any(path => path.Path.EndsWith("movies", StringComparison.OrdinalIgnoreCase)) &&
+                            options.EnableAutomaticSeriesGrouping == false &&
+                            options.TypeOptions.Length == 1 &&
+                            options.TypeOptions[0].Type == "Movie"),
                         false),
                     Times.Once);
 
@@ -60,7 +65,9 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Unit.VirtualLibrary
                         CollectionTypeOptions.tvshows,
                         It.Is<LibraryOptions>(options =>
                             options.PathInfos != null &&
-                            options.PathInfos.Any(path => path.Path.EndsWith("tv", StringComparison.OrdinalIgnoreCase))),
+                            options.PathInfos.Any(path => path.Path.EndsWith("tv", StringComparison.OrdinalIgnoreCase)) &&
+                            options.EnableAutomaticSeriesGrouping &&
+                            options.TypeOptions.Any(type => type.Type == "Series")),
                         false),
                     Times.Once);
             }
@@ -78,24 +85,39 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Unit.VirtualLibrary
                 Directory.CreateDirectory(moviePath);
                 Directory.CreateDirectory(tvPath);
 
+                var movieFolderId = Guid.NewGuid();
+                var tvFolderId = Guid.NewGuid();
+                var movieCollectionFolder = new CollectionFolder { Id = movieFolderId, Name = "Alice's Recommended Movies" };
+                var tvCollectionFolder = new CollectionFolder { Id = tvFolderId, Name = "Alice's Recommended TV" };
+
                 var existingFolders = new List<VirtualFolderInfo>
             {
                 new VirtualFolderInfo
                 {
                     Name = "Alice's Recommended Movies",
-                    ItemId = Guid.NewGuid().ToString(),
+                    ItemId = movieFolderId.ToString(),
                     Locations = new[] { moviePath }
                 },
                 new VirtualFolderInfo
                 {
                     Name = "Alice's Recommended TV",
-                    ItemId = Guid.NewGuid().ToString(),
+                    ItemId = tvFolderId.ToString(),
                     Locations = new[] { tvPath }
                 }
             };
 
                 var mockLibraryManager = new Mock<ILibraryManager>();
                 mockLibraryManager.Setup(m => m.GetVirtualFolders()).Returns(existingFolders);
+                mockLibraryManager.Setup(m => m.GetItemById<CollectionFolder>(movieFolderId)).Returns(movieCollectionFolder);
+                mockLibraryManager.Setup(m => m.GetItemById<CollectionFolder>(tvFolderId)).Returns(tvCollectionFolder);
+                mockLibraryManager.Setup(m => m.GetUserRootFolder()).Returns(new Folder());
+                mockLibraryManager
+                    .Setup(m => m.UpdateItemAsync(
+                        It.IsAny<BaseItem>(),
+                        It.IsAny<BaseItem>(),
+                        ItemUpdateType.MetadataEdit,
+                        It.IsAny<System.Threading.CancellationToken>()))
+                    .Returns(Task.CompletedTask);
 
                 var service = CreateService(basePath, mockLibraryManager.Object, Mock.Of<IUserManager>());
                 var user = new User("Alice", "Default", "Default") { Id = userId };
@@ -109,6 +131,9 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Unit.VirtualLibrary
                         It.IsAny<LibraryOptions>(),
                         It.IsAny<bool>()),
                     Times.Never);
+
+                movieCollectionFolder.Name.Should().Be("Recommended Movies");
+                tvCollectionFolder.Name.Should().Be("Recommended Shows");
             }
         }
 

@@ -497,6 +497,13 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
 
             if (seasonLinks == 0)
             {
+                seasonLinks = SymlinkEpisodeFilesFromRoot(seriesPath, seriesSourceDir);
+                if (seasonLinks > 0)
+                {
+                    LinkItemArtwork(seriesPath, series);
+                    return seasonLinks;
+                }
+
                 try
                 {
                     if (Directory.Exists(seriesPath))
@@ -514,6 +521,36 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
 
             LinkItemArtwork(seriesPath, series);
             return seasonLinks;
+        }
+
+        /// <summary>
+        /// Symlinks episode video files from the series root when there are no season subfolders.
+        /// Keeps tvshow.nfo in the wrapper so Jellyfin identifies the folder as a series.
+        /// </summary>
+        private int SymlinkEpisodeFilesFromRoot(string seriesPath, string seriesSourceDir)
+        {
+            var episodeLinks = 0;
+
+            foreach (var file in Directory.EnumerateFiles(seriesSourceDir))
+            {
+                if (!IsVideoFile(file))
+                {
+                    continue;
+                }
+
+                var linkPath = Path.Combine(seriesPath, Path.GetFileName(file));
+                try
+                {
+                    CreateSymlink(linkPath, file);
+                    episodeLinks++;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to symlink episode file {EpisodeFile} for series at {Path}", file, seriesPath);
+                }
+            }
+
+            return episodeLinks;
         }
 
         /// <summary>

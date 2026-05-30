@@ -11,30 +11,47 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
     internal static class RecommendationLibraryOptions
     {
         /// <summary>
-        /// Creates library options for a recommendation virtual folder.
+        /// Creates library options for a movie recommendation virtual folder.
         /// </summary>
         /// <param name="libraryPath">Path to the user's recommendation folder.</param>
         /// <returns>Configured <see cref="LibraryOptions"/>.</returns>
-        public static LibraryOptions Create(string libraryPath)
+        public static LibraryOptions CreateForMovies(string libraryPath)
+        {
+            return CreateBaseOptions(libraryPath, enableAutomaticSeriesGrouping: false, CreateTypeOptions("Movie"));
+        }
+
+        /// <summary>
+        /// Creates library options for a TV recommendation virtual folder.
+        /// </summary>
+        /// <param name="libraryPath">Path to the user's recommendation folder.</param>
+        /// <returns>Configured <see cref="LibraryOptions"/>.</returns>
+        public static LibraryOptions CreateForTvShows(string libraryPath)
+        {
+            return CreateBaseOptions(
+                libraryPath,
+                enableAutomaticSeriesGrouping: true,
+                CreateTypeOptions("Series"),
+                CreateTypeOptions("Season"),
+                CreateTypeOptions("Episode"));
+        }
+
+        private static LibraryOptions CreateBaseOptions(
+            string libraryPath,
+            bool enableAutomaticSeriesGrouping,
+            params TypeOptions[] typeOptions)
         {
             return new LibraryOptions
             {
                 PathInfos = new[] { new MediaPathInfo(libraryPath) },
                 AutomaticallyAddToCollection = false,
-                EnableAutomaticSeriesGrouping = false,
+                EnableAutomaticSeriesGrouping = enableAutomaticSeriesGrouping,
                 SaveLocalMetadata = false,
                 EnableChapterImageExtraction = false,
                 ExtractChapterImagesDuringLibraryScan = false,
                 EnableTrickplayImageExtraction = false,
                 ExtractTrickplayImagesDuringLibraryScan = false,
                 EnableLUFSScan = false,
-                TypeOptions = new[]
-                {
-                    CreateTypeOptions("Movie"),
-                    CreateTypeOptions("Series"),
-                    CreateTypeOptions("Season"),
-                    CreateTypeOptions("Episode")
-                }
+                TypeOptions = typeOptions
             };
         }
 

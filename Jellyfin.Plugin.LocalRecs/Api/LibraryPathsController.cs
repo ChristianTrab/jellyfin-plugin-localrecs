@@ -78,6 +78,8 @@ namespace Jellyfin.Plugin.LocalRecs.Api
                         TvLibraryPath = tvPath,
                         SuggestedMovieLibraryName = RecommendationLibraryProvisioningService.GetSuggestedMovieLibraryName(username),
                         SuggestedTvLibraryName = RecommendationLibraryProvisioningService.GetSuggestedTvLibraryName(username),
+                        MovieLibraryDisplayName = RecommendationLibraryProvisioningService.GetMovieLibraryDisplayName(),
+                        TvLibraryDisplayName = RecommendationLibraryProvisioningService.GetTvLibraryDisplayName(),
                         LibrariesCreated = librariesCreated
                     });
                 }
