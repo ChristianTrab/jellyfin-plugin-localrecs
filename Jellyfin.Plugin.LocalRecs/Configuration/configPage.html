@@ -77,6 +77,22 @@
 
                         <div class="checkboxContainer checkboxContainer-withDescription">
                             <label>
+                                <input is="emby-checkbox" type="checkbox" id="autoCreateRecommendationLibraries" name="autoCreateRecommendationLibraries" />
+                                <span>Automatically create recommendation libraries</span>
+                            </label>
+                            <div class="fieldDescription">Creates a Movies and Shows library for each user on startup and when users are added (default: enabled)</div>
+                        </div>
+
+                        <div class="checkboxContainer checkboxContainer-withDescription">
+                            <label>
+                                <input is="emby-checkbox" type="checkbox" id="autoManageLibraryPermissions" name="autoManageLibraryPermissions" />
+                                <span>Automatically manage library permissions</span>
+                            </label>
+                            <div class="fieldDescription">Grants each user access to all libraries except other users' recommendation libraries (default: enabled)</div>
+                        </div>
+
+                        <div class="checkboxContainer checkboxContainer-withDescription">
+                            <label>
                                 <input is="emby-checkbox" type="checkbox" id="enableRatingProximity" name="enableRatingProximity" />
                                 <span>Enable Rating Proximity Weighting</span>
                             </label>
@@ -222,9 +238,25 @@
                     var self = this;
                     var container = page.querySelector('#setupStatusContainer');
                     container.innerHTML = '<p>Loading library paths...</p>';
-                    
-                    ApiClient.getJSON(ApiClient.getUrl('LocalRecs/Setup/Paths'))
-                        .then(function(users) {
+
+                    Promise.all([
+                        ApiClient.getJSON(ApiClient.getUrl('LocalRecs/Setup/Paths')),
+                        ApiClient.getPluginConfiguration(self.pluginId)
+                    ])
+                        .then(function(results) {
+                            var users = results[0];
+                            var config = results[1];
+
+                            if (config.AutoCreateRecommendationLibraries !== false) {
+                                container.innerHTML = '<div style="background: rgba(76, 175, 80, 0.1); padding: 1.5em; border-left: 4px solid #4caf50;">' +
+                                    '<h3 style="margin-top: 0;">Automatic Library Setup Enabled</h3>' +
+                                    '<p>Recommendation libraries and permissions are managed automatically for each user.</p>' +
+                                    '<p>After installing or adding users, restart Jellyfin or wait for the plugin startup task to finish provisioning libraries.</p>' +
+                                    '<p>Run the "Refresh Local Recommendations" scheduled task to populate recommendations.</p>' +
+                                    '</div>';
+                                return;
+                            }
+
                             if (!users || users.length === 0) {
                                 container.innerHTML = '<p>No users found. Create users in Jellyfin first, then refresh this page.</p>';
                                 return;
@@ -436,6 +468,8 @@
                             page.querySelector('#maxVocabularyTags').value = config.MaxVocabularyTags || 500;
                             page.querySelector('#enableRatingProximity').checked = config.EnableRatingProximity || false;
                             page.querySelector('#ratingProximityWeight').value = config.RatingProximityWeight || 0.2;
+                            page.querySelector('#autoCreateRecommendationLibraries').checked = config.AutoCreateRecommendationLibraries !== false;
+                            page.querySelector('#autoManageLibraryPermissions').checked = config.AutoManageLibraryPermissions !== false;
 
                             self.updateFieldVisibility(page);
                             Dashboard.hideLoadingMsg();
@@ -475,6 +509,8 @@
                             config.MaxVocabularyTags = parseInt(page.querySelector('#maxVocabularyTags').value);
                             config.EnableRatingProximity = page.querySelector('#enableRatingProximity').checked;
                             config.RatingProximityWeight = parseFloat(page.querySelector('#ratingProximityWeight').value);
+                            config.AutoCreateRecommendationLibraries = page.querySelector('#autoCreateRecommendationLibraries').checked;
+                            config.AutoManageLibraryPermissions = page.querySelector('#autoManageLibraryPermissions').checked;
 
                             return ApiClient.updatePluginConfiguration(self.pluginId, config);
                         })

@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using Jellyfin.Plugin.LocalRecs.Models;
 
 namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
 {
@@ -55,6 +56,64 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
             try
             {
                 return (File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0;
+            }
+            catch (Exception)
+            {
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Parses a virtual library path into user ID and media type.
+        /// </summary>
+        /// <param name="basePath">The virtual library root directory.</param>
+        /// <param name="location">A path to test (typically a Jellyfin library location).</param>
+        /// <param name="userId">The parsed user ID when successful.</param>
+        /// <param name="mediaType">The parsed media type when successful.</param>
+        /// <returns>True when the path matches <c>{basePath}/{userId}/movies|tv</c>.</returns>
+        public static bool TryParseUserLibraryPath(
+            string basePath,
+            string location,
+            out Guid userId,
+            out MediaType? mediaType)
+        {
+            userId = Guid.Empty;
+            mediaType = null;
+
+            if (!IsUnderBasePath(location, basePath))
+            {
+                return false;
+            }
+
+            try
+            {
+                var normalizedBase = NormalizeBasePath(basePath);
+                var normalizedLocation = Path.GetFullPath(location).Replace('\\', '/');
+                var relative = normalizedLocation[normalizedBase.Length..].TrimStart('/');
+                var segments = relative.Split('/', StringSplitOptions.RemoveEmptyEntries);
+                if (segments.Length != 2)
+                {
+                    return false;
+                }
+
+                if (!Guid.TryParse(segments[0], out userId))
+                {
+                    return false;
+                }
+
+                if (segments[1].Equals("movies", StringComparison.OrdinalIgnoreCase))
+                {
+                    mediaType = MediaType.Movie;
+                    return true;
+                }
+
+                if (segments[1].Equals("tv", StringComparison.OrdinalIgnoreCase))
+                {
+                    mediaType = MediaType.Series;
+                    return true;
+                }
+
+                return false;
             }
             catch (Exception)
             {

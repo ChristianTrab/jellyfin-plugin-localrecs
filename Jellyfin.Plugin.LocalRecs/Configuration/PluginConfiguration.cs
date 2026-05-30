@@ -29,6 +29,8 @@ namespace Jellyfin.Plugin.LocalRecs.Configuration
             MaxVocabularyTags = 500;
             EnableRatingProximity = true;
             RatingProximityWeight = 0.2;
+            AutoCreateRecommendationLibraries = true;
+            AutoManageLibraryPermissions = true;
         }
 
         /// <summary>
@@ -88,6 +90,18 @@ namespace Jellyfin.Plugin.LocalRecs.Configuration
         /// Default: 0.2 (20% rating proximity, 80% content similarity).
         /// </summary>
         public double RatingProximityWeight { get; set; }
+
+        /// <summary>
+        /// Gets or sets a value indicating whether to automatically create Jellyfin libraries
+        /// for each user's movie and TV recommendation folders.
+        /// </summary>
+        public bool AutoCreateRecommendationLibraries { get; set; }
+
+        /// <summary>
+        /// Gets or sets a value indicating whether to automatically manage library access:
+        /// each user can access all libraries except other users' recommendation libraries.
+        /// </summary>
+        public bool AutoManageLibraryPermissions { get; set; }
 
         /// <summary>
         /// Validates the configuration and returns validation errors.

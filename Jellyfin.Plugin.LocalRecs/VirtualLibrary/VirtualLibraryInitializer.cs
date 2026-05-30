@@ -21,6 +21,7 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
         private readonly string _virtualLibraryBasePath;
         private readonly VirtualLibraryManager _virtualLibraryManager;
         private readonly PlayStatusSyncService _playStatusSyncService;
+        private readonly RecommendationLibraryProvisioningService _provisioningService;
 
         /// <summary>
         /// Initializes a new instance of the <see cref="VirtualLibraryInitializer"/> class.
@@ -30,19 +31,22 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
         /// <param name="virtualLibraryBasePath">Base path for virtual libraries.</param>
         /// <param name="virtualLibraryManager">Virtual library manager for directory operations.</param>
         /// <param name="playStatusSyncService">Play status sync service.</param>
+        /// <param name="provisioningService">Recommendation library provisioning service.</param>
         /// <exception cref="ArgumentNullException">Thrown when any parameter is null.</exception>
         public VirtualLibraryInitializer(
             ILogger<VirtualLibraryInitializer> logger,
             IUserManager userManager,
             string virtualLibraryBasePath,
             VirtualLibraryManager virtualLibraryManager,
-            PlayStatusSyncService playStatusSyncService)
+            PlayStatusSyncService playStatusSyncService,
+            RecommendationLibraryProvisioningService provisioningService)
         {
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _userManager = userManager ?? throw new ArgumentNullException(nameof(userManager));
             _virtualLibraryBasePath = virtualLibraryBasePath ?? throw new ArgumentNullException(nameof(virtualLibraryBasePath));
             _virtualLibraryManager = virtualLibraryManager ?? throw new ArgumentNullException(nameof(virtualLibraryManager));
             _playStatusSyncService = playStatusSyncService ?? throw new ArgumentNullException(nameof(playStatusSyncService));
+            _provisioningService = provisioningService ?? throw new ArgumentNullException(nameof(provisioningService));
         }
 
         /// <inheritdoc />
@@ -61,6 +65,8 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
                 {
                     LogSetupInstructions();
                     _logger.LogInformation("Play status sync service is active and monitoring virtual library changes");
+
+                    _ = ProvisionLibrariesAsync(cancellationToken);
 
                     // Sync play status from source library to virtual library items
                     // This ensures virtual library items reflect the real library's play status
@@ -86,6 +92,22 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
             // PlayStatusSyncService is a DI singleton; the host container disposes it on shutdown.
             _logger.LogInformation("Virtual library services stopped");
             return Task.CompletedTask;
+        }
+
+        private async Task ProvisionLibrariesAsync(CancellationToken cancellationToken)
+        {
+            try
+            {
+                await _provisioningService.ProvisionAllUsersAsync(cancellationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                _logger.LogInformation("Recommendation library provisioning was cancelled");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to provision recommendation libraries");
+            }
         }
 
         private void InitializeDirectories(CancellationToken cancellationToken)
@@ -132,6 +154,25 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
 
         private void LogSetupInstructions()
         {
+            var config = Plugin.Instance?.Configuration;
+            if (config?.AutoCreateRecommendationLibraries == true)
+            {
+                _logger.LogInformation(
+                    "Recommendation libraries are created automatically (AutoCreateRecommendationLibraries enabled)");
+            }
+
+            if (config?.AutoManageLibraryPermissions == true)
+            {
+                _logger.LogInformation(
+                    "Library permissions are managed automatically: each user can access all libraries except other users' recommendation libraries");
+            }
+
+            if (config?.AutoCreateRecommendationLibraries == true &&
+                config.AutoManageLibraryPermissions == true)
+            {
+                return;
+            }
+
             var users = _userManager.GetUsers().ToList();
 
             if (users.Count == 0)

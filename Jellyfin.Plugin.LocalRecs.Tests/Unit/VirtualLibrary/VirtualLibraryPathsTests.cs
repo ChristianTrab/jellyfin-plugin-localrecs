@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using FluentAssertions;
+using Jellyfin.Plugin.LocalRecs.Models;
 using Jellyfin.Plugin.LocalRecs.VirtualLibrary;
 using Xunit;
 
@@ -55,6 +56,28 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Unit.VirtualLibrary
 
             normalized.Should().EndWith("/");
             normalized.Should().NotContain("\\");
+        }
+
+        [Fact]
+        public void TryParseUserLibraryPath_ValidMoviePath_ReturnsUserAndMediaType()
+        {
+            var userId = Guid.NewGuid();
+            var moviePath = Path.Combine(_basePath, userId.ToString(), "movies");
+
+            var parsed = VirtualLibraryPaths.TryParseUserLibraryPath(_basePath, moviePath, out var parsedUserId, out var mediaType);
+
+            parsed.Should().BeTrue();
+            parsedUserId.Should().Be(userId);
+            mediaType.Should().Be(MediaType.Movie);
+        }
+
+        [Fact]
+        public void TryParseUserLibraryPath_OutsideBasePath_ReturnsFalse()
+        {
+            var outsidePath = Path.Combine(Path.GetDirectoryName(_basePath)!, "other", Guid.NewGuid().ToString(), "movies");
+
+            VirtualLibraryPaths.TryParseUserLibraryPath(_basePath, outsidePath, out _, out _)
+                .Should().BeFalse();
         }
 
         [SkippableFact]

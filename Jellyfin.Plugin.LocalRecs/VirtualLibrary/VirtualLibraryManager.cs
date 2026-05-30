@@ -58,6 +58,11 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
         }
 
         /// <summary>
+        /// Gets the virtual library base path used for per-user recommendation folders.
+        /// </summary>
+        public string BasePath => _virtualLibraryBasePath;
+
+        /// <summary>
         /// Counts recommendation entries at the top level of a virtual library directory.
         /// Each recommended movie or series is one folder or directory symlink.
         /// </summary>

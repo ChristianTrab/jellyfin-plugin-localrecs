@@ -53,6 +53,8 @@ namespace Jellyfin.Plugin.LocalRecs
                     virtualLibraryBasePath);
             });
 
+            serviceCollection.AddSingleton<RecommendationLibraryProvisioningService>();
+
             serviceCollection.AddSingleton(sp =>
             {
                 var virtualLibraryBasePath = GetVirtualLibraryBasePath(sp);
@@ -77,19 +79,22 @@ namespace Jellyfin.Plugin.LocalRecs
                     sp.GetRequiredService<MediaBrowser.Controller.Library.IUserManager>(),
                     virtualLibraryBasePath,
                     sp.GetRequiredService<VirtualLibraryManager>(),
-                    sp.GetRequiredService<PlayStatusSyncService>());
+                    sp.GetRequiredService<PlayStatusSyncService>(),
+                    sp.GetRequiredService<RecommendationLibraryProvisioningService>());
             });
 
             // User Lifecycle Event Handlers
             serviceCollection.AddScoped<IEventConsumer<UserCreatedEventArgs>>(sp =>
                 new UserCreatedEventHandler(
                     sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<UserCreatedEventHandler>>(),
-                    sp.GetRequiredService<VirtualLibraryManager>()));
+                    sp.GetRequiredService<VirtualLibraryManager>(),
+                    sp.GetRequiredService<RecommendationLibraryProvisioningService>()));
 
             serviceCollection.AddScoped<IEventConsumer<UserDeletedEventArgs>>(sp =>
                 new UserDeletedEventHandler(
                     sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<UserDeletedEventHandler>>(),
-                    sp.GetRequiredService<VirtualLibraryManager>()));
+                    sp.GetRequiredService<VirtualLibraryManager>(),
+                    sp.GetRequiredService<RecommendationLibraryProvisioningService>()));
 
             // Phase 8: Scheduled Tasks
             serviceCollection.AddTransient<IScheduledTask, RecommendationRefreshTask>();
