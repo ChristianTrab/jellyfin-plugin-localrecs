@@ -9,6 +9,7 @@ using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Entities.Movies;
 using MediaBrowser.Controller.Entities.TV;
 using MediaBrowser.Controller.Library;
+using MediaBrowser.Model.Entities;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using Xunit;
@@ -169,8 +170,10 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Unit.VirtualLibrary
             var userId = Guid.NewGuid();
             _manager.EnsureUserDirectoriesExist(userId, "TestUser");
 
-            File.WriteAllText(Path.Combine(_sourceMediaDir, "poster.jpg"), "fake poster");
-            File.WriteAllText(Path.Combine(_sourceMediaDir, "fanart.jpg"), "fake fanart");
+            var posterPath = Path.Combine(_sourceMediaDir, "poster.jpg");
+            var fanartPath = Path.Combine(_sourceMediaDir, "fanart.jpg");
+            File.WriteAllText(posterPath, "fake poster");
+            File.WriteAllText(fanartPath, "fake fanart");
 
             var movieId = Guid.NewGuid();
             var mockMovie = new Movie
@@ -178,7 +181,12 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Unit.VirtualLibrary
                 Id = movieId,
                 Name = "Art Movie",
                 Path = _sourceMediaFile,
-                ProductionYear = 2023
+                ProductionYear = 2023,
+                ImageInfos = new[]
+                {
+                    new ItemImageInfo { Path = posterPath, Type = ImageType.Primary },
+                    new ItemImageInfo { Path = fanartPath, Type = ImageType.Backdrop },
+                }
             };
 
             _mockLibraryManager.Setup(m => m.GetItemById(movieId)).Returns(mockMovie);
