@@ -63,7 +63,7 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
         }
 
         /// <summary>
-        /// Resolves a path to its final on-disk location, following file and directory symlinks.
+        /// Resolves a path to its final on-disk location, following directory and file symlinks.
         /// </summary>
         /// <param name="path">The path to resolve.</param>
         /// <returns>The resolved path, or null when resolution fails.</returns>
@@ -76,25 +76,52 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
 
             try
             {
-                if (IsSymbolicLink(path))
-                {
-                    if (File.Exists(path))
-                    {
-                        return new FileInfo(path).ResolveLinkTarget(returnFinalTarget: true)?.FullName;
-                    }
+                path = Path.GetFullPath(path);
 
-                    if (Directory.Exists(path))
-                    {
-                        return new DirectoryInfo(path).ResolveLinkTarget(returnFinalTarget: true)?.FullName;
-                    }
+                if (!File.Exists(path) && !Directory.Exists(path))
+                {
+                    return null;
                 }
 
-                return Path.GetFullPath(path);
+                if (IsSymbolicLink(path))
+                {
+                    var linkTarget = ResolveLinkTarget(path);
+                    return linkTarget != null ? ResolvePhysicalPath(linkTarget) : null;
+                }
+
+                var parent = Path.GetDirectoryName(path);
+                if (string.IsNullOrEmpty(parent))
+                {
+                    return path;
+                }
+
+                var resolvedParent = ResolvePhysicalPath(parent);
+                if (resolvedParent == null)
+                {
+                    return null;
+                }
+
+                return Path.Combine(resolvedParent, Path.GetFileName(path));
             }
             catch (Exception)
             {
                 return null;
             }
+        }
+
+        private static string? ResolveLinkTarget(string path)
+        {
+            if (File.Exists(path))
+            {
+                return new FileInfo(path).ResolveLinkTarget(returnFinalTarget: true)?.FullName;
+            }
+
+            if (Directory.Exists(path))
+            {
+                return new DirectoryInfo(path).ResolveLinkTarget(returnFinalTarget: true)?.FullName;
+            }
+
+            return null;
         }
     }
 }

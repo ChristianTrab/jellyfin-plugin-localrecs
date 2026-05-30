@@ -75,7 +75,10 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Unit.VirtualLibrary
             var sourceItem = new Movie { Id = Guid.NewGuid(), Name = "Source", Path = sourceFile };
             var virtualItem = new Movie { Id = Guid.NewGuid(), Name = "Virtual", Path = virtualFilePath };
 
-            _mockLibraryManager.Setup(m => m.FindByPath(sourceFile, false)).Returns(sourceItem);
+            var resolvedSourcePath = VirtualLibraryPaths.ResolvePhysicalPath(virtualFilePath);
+            resolvedSourcePath.Should().NotBeNull();
+
+            _mockLibraryManager.Setup(m => m.FindByPath(resolvedSourcePath!, false)).Returns(sourceItem);
             _mockLibraryManager.Setup(m => m.FindByPath(virtualFilePath, false)).Returns(virtualItem);
 
             var sourceData = new UserItemData { Key = sourceItem.Id.ToString(), Played = true, PlayCount = 1 };
