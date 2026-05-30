@@ -54,6 +54,7 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Unit.VirtualLibrary
                             options.PathInfos != null &&
                             options.PathInfos.Any(path => path.Path.EndsWith("movies", StringComparison.OrdinalIgnoreCase)) &&
                             options.EnableAutomaticSeriesGrouping == false &&
+                            options.SaveLocalMetadata &&
                             options.TypeOptions.Length == 1 &&
                             options.TypeOptions[0].Type == "Movie"),
                         false),

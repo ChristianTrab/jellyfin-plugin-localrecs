@@ -29,4 +29,8 @@
         <EmbeddedResource Include="Configuration\*.html" />
     </ItemGroup>
 
+    <ItemGroup>
+        <InternalsVisibleTo Include="Jellyfin.Plugin.LocalRecs.Tests" />
+    </ItemGroup>
+
 </Project>

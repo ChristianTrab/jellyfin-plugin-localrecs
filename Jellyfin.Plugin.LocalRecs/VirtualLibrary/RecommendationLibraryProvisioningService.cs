@@ -243,6 +243,66 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
             }
         }
 
+        /// <summary>
+        /// Ensures a recommendation Jellyfin library uses metadata-friendly options (posters, local NFO, providers).
+        /// Safe to call for manually created libraries after refresh.
+        /// </summary>
+        /// <param name="libraryMediaPath">Virtual folder path on disk.</param>
+        /// <param name="mediaType">Movie or TV library.</param>
+        public void ApplyRecommendationLibraryOptionsIfNeeded(string libraryMediaPath, MediaType mediaType)
+        {
+            var collectionFolder = FindCollectionFolderByMediaPath(libraryMediaPath);
+            if (collectionFolder == null || string.IsNullOrEmpty(collectionFolder.Path))
+            {
+                return;
+            }
+
+            var currentOptions = collectionFolder.GetLibraryOptions();
+            if (!RecommendationLibraryOptions.NeedsMetadataOptionsUpdate(currentOptions))
+            {
+                return;
+            }
+
+            var desiredOptions = mediaType == MediaType.Movie
+                ? RecommendationLibraryOptions.CreateForMovies(libraryMediaPath)
+                : RecommendationLibraryOptions.CreateForTvShows(libraryMediaPath);
+
+            if (currentOptions.PathInfos is { Length: > 0 })
+            {
+                desiredOptions.PathInfos = currentOptions.PathInfos;
+            }
+
+            collectionFolder.UpdateLibraryOptions(desiredOptions);
+
+            _logger.LogInformation(
+                "Updated recommendation library metadata/image options for {Path} ({MediaType})",
+                libraryMediaPath,
+                mediaType);
+        }
+
+        /// <summary>
+        /// Applies metadata-friendly library options for a user's recommendation folders when present.
+        /// </summary>
+        /// <param name="userId">The user identifier.</param>
+        /// <param name="includeTv">Whether to update the TV recommendation library.</param>
+        public void ApplyRecommendationLibraryOptionsForUser(Guid userId, bool includeTv)
+        {
+            var moviePath = _virtualLibraryManager.GetUserLibraryPath(userId, MediaType.Movie);
+            if (Directory.Exists(moviePath))
+            {
+                ApplyRecommendationLibraryOptionsIfNeeded(moviePath, MediaType.Movie);
+            }
+
+            if (includeTv)
+            {
+                var tvPath = _virtualLibraryManager.GetUserLibraryPath(userId, MediaType.Series);
+                if (Directory.Exists(tvPath))
+                {
+                    ApplyRecommendationLibraryOptionsIfNeeded(tvPath, MediaType.Series);
+                }
+            }
+        }
+
         private async Task EnsureLibrariesForUserAsync(
             User user,
             PluginConfiguration config,
@@ -285,6 +345,10 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
                         GetMovieLibraryDisplayName(),
                         cancellationToken)
                     .ConfigureAwait(false);
+
+                ApplyRecommendationLibraryOptionsIfNeeded(
+                    userLibraries[MediaType.Movie].Path,
+                    MediaType.Movie);
             }
 
             if (config.IsTvRecommendationsEnabled())
@@ -308,6 +372,10 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
                             GetTvLibraryDisplayName(),
                             cancellationToken)
                         .ConfigureAwait(false);
+
+                    ApplyRecommendationLibraryOptionsIfNeeded(
+                        userLibraries[MediaType.Series].Path,
+                        MediaType.Series);
                 }
             }
         }

@@ -1,4 +1,3 @@
-using System;
 using MediaBrowser.Model.Configuration;
 using MediaBrowser.Model.Entities;
 
@@ -6,7 +5,7 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
 {
     /// <summary>
     /// Default Jellyfin library options for per-user recommendation libraries.
-    /// Tuned to minimize remote metadata/image fetches and heavy scan work.
+    /// Uses Jellyfin's built-in image/metadata defaults so symlinked posters and provider IDs resolve.
     /// </summary>
     internal static class RecommendationLibraryOptions
     {
@@ -35,6 +34,29 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
                 CreateTypeOptions("Episode"));
         }
 
+        /// <summary>
+        /// Returns true when library options block posters or local NFO (legacy plugin defaults).
+        /// </summary>
+        /// <param name="current">Current library options.</param>
+        /// <returns>True when options should be updated.</returns>
+        public static bool NeedsMetadataOptionsUpdate(LibraryOptions current)
+        {
+            if (!current.SaveLocalMetadata)
+            {
+                return true;
+            }
+
+            foreach (var typeOption in current.TypeOptions)
+            {
+                if (typeOption.ImageOptions.Length > 0 && typeOption.GetLimit(ImageType.Primary) == 0)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
         private static LibraryOptions CreateBaseOptions(
             string libraryPath,
             bool enableAutomaticSeriesGrouping,
@@ -45,7 +67,7 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
                 PathInfos = new[] { new MediaPathInfo(libraryPath) },
                 AutomaticallyAddToCollection = false,
                 EnableAutomaticSeriesGrouping = enableAutomaticSeriesGrouping,
-                SaveLocalMetadata = false,
+                SaveLocalMetadata = true,
                 EnableChapterImageExtraction = false,
                 ExtractChapterImagesDuringLibraryScan = false,
                 EnableTrickplayImageExtraction = false,
@@ -55,22 +77,9 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
             };
         }
 
-        private static TypeOptions CreateTypeOptions(string type)
-        {
-            return new TypeOptions
-            {
-                Type = type,
-                ImageOptions = new[]
-                {
-                    new ImageOption { Type = ImageType.Primary, Limit = 0 },
-                    new ImageOption { Type = ImageType.Art, Limit = 0 },
-                    new ImageOption { Type = ImageType.Backdrop, Limit = 0 },
-                    new ImageOption { Type = ImageType.Banner, Limit = 0 },
-                    new ImageOption { Type = ImageType.Logo, Limit = 0 },
-                    new ImageOption { Type = ImageType.Thumb, Limit = 0 },
-                    new ImageOption { Type = ImageType.Disc, Limit = 0 }
-                }
-            };
-        }
+        /// <summary>
+        /// Empty ImageOptions defer to Jellyfin's per-type defaults (Primary limit 1, etc.).
+        /// </summary>
+        private static TypeOptions CreateTypeOptions(string type) => new TypeOptions { Type = type };
     }
 }

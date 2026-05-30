@@ -789,17 +789,72 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
 
         /// <summary>
         /// Writes movie.nfo with provider IDs for file-level symlink layouts.
+        /// Copies the source library's movie.nfo when present for richer local metadata.
         /// </summary>
         private void WriteMovieNfo(string moviePath, BaseItem item)
         {
             var nfoPath = Path.Combine(moviePath, "movie.nfo");
+            var sourceDir = Path.GetDirectoryName(item.Path);
+
+            if (!string.IsNullOrEmpty(sourceDir))
+            {
+                var sourceCandidates = new[]
+                {
+                    Path.Combine(sourceDir, "movie.nfo"),
+                    Path.Combine(sourceDir, Path.GetFileNameWithoutExtension(item.Path) + ".nfo")
+                };
+
+                foreach (var sourceNfoPath in sourceCandidates)
+                {
+                    if (!File.Exists(sourceNfoPath))
+                    {
+                        continue;
+                    }
+
+                    try
+                    {
+                        File.Copy(sourceNfoPath, nfoPath, overwrite: true);
+                        return;
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Failed to copy movie.nfo from {SourcePath}, generating minimal nfo", sourceNfoPath);
+                    }
+                }
+            }
+
             var sb = new StringBuilder();
             sb.AppendLine("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>");
             sb.AppendLine("<movie>");
             sb.Append("  <title>").Append(XmlEscape(item.Name ?? "Unknown")).AppendLine("</title>");
+
+            if (!string.IsNullOrWhiteSpace(item.Overview))
+            {
+                sb.Append("  <plot>").Append(XmlEscape(item.Overview)).AppendLine("</plot>");
+            }
+
             if (item.ProductionYear.HasValue)
             {
                 sb.Append("  <year>").Append(item.ProductionYear.Value).AppendLine("</year>");
+            }
+
+            if (item.RunTimeTicks.HasValue && item.RunTimeTicks.Value > 0)
+            {
+                var runtimeMinutes = (int)(item.RunTimeTicks.Value / TimeSpan.TicksPerMinute);
+                sb.Append("  <runtime>").Append(runtimeMinutes).AppendLine("</runtime>");
+            }
+
+            if (item.CommunityRating.HasValue)
+            {
+                sb.Append("  <rating>").Append(item.CommunityRating.Value.ToString(System.Globalization.CultureInfo.InvariantCulture)).AppendLine("</rating>");
+            }
+
+            if (item.Genres != null)
+            {
+                foreach (var genre in item.Genres.Where(g => !string.IsNullOrWhiteSpace(g)))
+                {
+                    sb.Append("  <genre>").Append(XmlEscape(genre)).AppendLine("</genre>");
+                }
             }
 
             AppendProviderIds(sb, item);
