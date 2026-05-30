@@ -160,14 +160,17 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Domain
         {
             // Arrange
             var movie = CreateMockMovie("Movie With Path", 2020);
-            movie.Path = "/media/movies/movie.mkv";
+            var moviePath = Path.Combine(Path.GetTempPath(), "jf-localrecs-path-" + Guid.NewGuid(), "movie.mkv");
+            Directory.CreateDirectory(Path.GetDirectoryName(moviePath)!);
+            File.WriteAllText(moviePath, "test");
+            movie.Path = moviePath;
             SetupLibraryManagerReturns(new List<BaseItem> { movie }, new List<BaseItem>());
 
             // Act
             var result = _service.GetAllMediaItems();
 
             // Assert
-            result[0].Path.Should().Be("/media/movies/movie.mkv");
+            result[0].Path.Should().Be(moviePath);
         }
 
         #endregion
@@ -587,7 +590,10 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Domain
             virtualMovie.Path = Path.Combine(_virtualLibraryBasePath, Guid.NewGuid().ToString(), "movies", "Virtual.mkv");
 
             var realMovie = CreateMockMovie("Real Movie", 2020);
-            realMovie.Path = @"C:\media\Real Movie.mkv";
+            var realMoviePath = Path.Combine(Path.GetTempPath(), "jf-localrecs-real-" + Guid.NewGuid(), "Real Movie.mkv");
+            Directory.CreateDirectory(Path.GetDirectoryName(realMoviePath)!);
+            File.WriteAllText(realMoviePath, "test");
+            realMovie.Path = realMoviePath;
 
             SetupLibraryManagerReturns(new List<BaseItem> { virtualMovie, realMovie }, new List<BaseItem>());
 
@@ -604,7 +610,9 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Domain
             Directory.CreateDirectory(siblingBase);
 
             var movie = CreateMockMovie("Backup Library Movie", 2021);
-            movie.Path = Path.Combine(siblingBase, "Movie.mkv");
+            var moviePath = Path.Combine(siblingBase, "Movie.mkv");
+            File.WriteAllText(moviePath, "test");
+            movie.Path = moviePath;
 
             SetupLibraryManagerReturns(new List<BaseItem> { movie }, new List<BaseItem>());
 

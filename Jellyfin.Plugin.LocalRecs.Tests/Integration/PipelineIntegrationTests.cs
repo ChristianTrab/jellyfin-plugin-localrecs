@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
 using System.Linq;
 using FluentAssertions;
 using Jellyfin.Database.Implementations.Entities;
@@ -9,6 +10,7 @@ using Jellyfin.Plugin.LocalRecs.Models;
 using Jellyfin.Plugin.LocalRecs.Services;
 using Jellyfin.Plugin.LocalRecs.Tests.Fixtures;
 using MediaBrowser.Controller.Entities;
+using MediaBrowser.Controller.Entities.Movies;
 using MediaBrowser.Controller.Library;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
@@ -30,12 +32,17 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Integration
         private readonly PluginConfiguration _config;
         private readonly Guid _testUserId;
         private readonly User _testUser;
+        private readonly string _virtualLibraryBasePath;
+        private readonly string _testMediaRoot;
 
         public PipelineIntegrationTests()
         {
             _mockUserDataManager = new Mock<IUserDataManager>();
             _mockUserManager = new Mock<IUserManager>();
             _mockLibraryManager = new Mock<ILibraryManager>();
+            _virtualLibraryBasePath = Path.Combine(Path.GetTempPath(), "localrecs-virtual-" + Guid.NewGuid());
+            _testMediaRoot = Path.Combine(Path.GetTempPath(), "localrecs-media-" + Guid.NewGuid());
+            Directory.CreateDirectory(_testMediaRoot);
 
             _testUserId = Guid.NewGuid();
             _testUser = new User("TestUser", "Default", "Default");
@@ -86,7 +93,8 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Integration
                 _mockUserDataManager.Object,
                 _mockUserManager.Object,
                 _mockLibraryManager.Object,
-                NullLogger<RecommendationEngine>.Instance);
+                NullLogger<RecommendationEngine>.Instance,
+                _virtualLibraryBasePath);
 
             // Act
             var recommendations = engine.GenerateRecommendations(
@@ -139,7 +147,8 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Integration
                 _mockUserDataManager.Object,
                 _mockUserManager.Object,
                 _mockLibraryManager.Object,
-                NullLogger<RecommendationEngine>.Instance);
+                NullLogger<RecommendationEngine>.Instance,
+                _virtualLibraryBasePath);
 
             // Act
             var recommendations = engine.GenerateRecommendations(
@@ -191,7 +200,8 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Integration
                 _mockUserDataManager.Object,
                 _mockUserManager.Object,
                 _mockLibraryManager.Object,
-                NullLogger<RecommendationEngine>.Instance);
+                NullLogger<RecommendationEngine>.Instance,
+                _virtualLibraryBasePath);
 
             // Act
             var recommendations = engine.GenerateRecommendations(
@@ -242,7 +252,8 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Integration
                 _mockUserDataManager.Object,
                 _mockUserManager.Object,
                 _mockLibraryManager.Object,
-                NullLogger<RecommendationEngine>.Instance);
+                NullLogger<RecommendationEngine>.Instance,
+                _virtualLibraryBasePath);
 
             // Act
             var recommendations = engine.GenerateRecommendations(
@@ -285,7 +296,8 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Integration
                 _mockUserDataManager.Object,
                 _mockUserManager.Object,
                 _mockLibraryManager.Object,
-                NullLogger<RecommendationEngine>.Instance);
+                NullLogger<RecommendationEngine>.Instance,
+                _virtualLibraryBasePath);
 
             var stopwatch = Stopwatch.StartNew();
 
@@ -371,7 +383,8 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Integration
                 _mockUserDataManager.Object,
                 _mockUserManager.Object,
                 _mockLibraryManager.Object,
-                NullLogger<RecommendationEngine>.Instance);
+                NullLogger<RecommendationEngine>.Instance,
+                _virtualLibraryBasePath);
 
             // Act - Build profile (should return null for no watch history)
             var userProfile = profileService.BuildUserProfile(_testUserId, embeddings, _config);
@@ -451,7 +464,8 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Integration
                 _mockUserDataManager.Object,
                 _mockUserManager.Object,
                 _mockLibraryManager.Object,
-                NullLogger<RecommendationEngine>.Instance);
+                NullLogger<RecommendationEngine>.Instance,
+                _virtualLibraryBasePath);
 
             // Act
             var recommendations = engine.GenerateRecommendations(
@@ -510,7 +524,8 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Integration
                 _mockUserDataManager.Object,
                 _mockUserManager.Object,
                 _mockLibraryManager.Object,
-                NullLogger<RecommendationEngine>.Instance);
+                NullLogger<RecommendationEngine>.Instance,
+                _virtualLibraryBasePath);
 
             // Act
             var recommendations = engine.GenerateRecommendations(
@@ -593,7 +608,8 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Integration
                 _mockUserDataManager.Object,
                 _mockUserManager.Object,
                 _mockLibraryManager.Object,
-                NullLogger<RecommendationEngine>.Instance);
+                NullLogger<RecommendationEngine>.Instance,
+                _virtualLibraryBasePath);
 
             // Act & Assert - Should handle gracefully
             var userProfile = profileService.BuildUserProfile(_testUserId, embeddings, configWithSmallHalfLife);
@@ -641,7 +657,8 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Integration
                 _mockUserDataManager.Object,
                 _mockUserManager.Object,
                 _mockLibraryManager.Object,
-                NullLogger<RecommendationEngine>.Instance);
+                NullLogger<RecommendationEngine>.Instance,
+                _virtualLibraryBasePath);
 
             // Act & Assert
             var userProfile = profileService.BuildUserProfile(_testUserId, embeddings, configWithExtremeBoosts);
@@ -669,10 +686,14 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Integration
 
             foreach (var item in library)
             {
-                var mockItem = new Mock<BaseItem>();
-                mockItem.Object.Id = item.Id;
-                _mockLibraryManager.Setup(m => m.GetItemById(item.Id)).Returns(mockItem.Object);
-                allBaseItems.Add(mockItem.Object);
+                var libraryItem = new Movie
+                {
+                    Id = item.Id,
+                    Name = item.Name
+                };
+                EnsureSourcePath(libraryItem);
+                _mockLibraryManager.Setup(m => m.GetItemById(item.Id)).Returns(libraryItem);
+                allBaseItems.Add(libraryItem);
 
                 var watch = watchHistory.FirstOrDefault(w => w.Item.Id == item.Id);
                 if (watchedItemIds.Contains(item.Id))
@@ -687,7 +708,7 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Integration
                     };
 
                     // Match on the specific mock item returned by GetItemById
-                    _mockUserDataManager.Setup(m => m.GetUserData(_testUser, mockItem.Object))
+                    _mockUserDataManager.Setup(m => m.GetUserData(_testUser, libraryItem))
                         .Returns(userData);
                 }
                 else
@@ -700,7 +721,7 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Integration
                         PlayCount = 0
                     };
 
-                    _mockUserDataManager.Setup(m => m.GetUserData(_testUser, mockItem.Object))
+                    _mockUserDataManager.Setup(m => m.GetUserData(_testUser, libraryItem))
                         .Returns(userData);
                 }
             }
@@ -708,6 +729,17 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Integration
             // Setup user-scoped library access: all items are accessible by default
             _mockLibraryManager.Setup(m => m.GetItemList(It.IsAny<InternalItemsQuery>()))
                 .Returns(allBaseItems);
+        }
+
+        private void EnsureSourcePath(BaseItem item)
+        {
+            var path = Path.Combine(_testMediaRoot, item.Id + ".mkv");
+            if (!File.Exists(path))
+            {
+                File.WriteAllText(path, "test");
+            }
+
+            item.Path = path;
         }
 
         private List<MediaItemMetadata> GenerateScalableLibrary(int count)

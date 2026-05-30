@@ -1,10 +1,12 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using Jellyfin.Data.Enums;
 using Jellyfin.Plugin.LocalRecs.Configuration;
 using Jellyfin.Plugin.LocalRecs.Models;
 using Jellyfin.Plugin.LocalRecs.Utilities;
+using Jellyfin.Plugin.LocalRecs.VirtualLibrary;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Entities.TV;
 using MediaBrowser.Controller.Library;
@@ -24,6 +26,7 @@ namespace Jellyfin.Plugin.LocalRecs.Services
         private readonly IUserManager _userManager;
         private readonly ILibraryManager _libraryManager;
         private readonly ILogger<RecommendationEngine> _logger;
+        private readonly string _virtualLibraryBasePath;
 
         /// <summary>
         /// Initializes a new instance of the <see cref="RecommendationEngine"/> class.
@@ -32,16 +35,19 @@ namespace Jellyfin.Plugin.LocalRecs.Services
         /// <param name="userManager">The user manager.</param>
         /// <param name="libraryManager">The library manager.</param>
         /// <param name="logger">The logger.</param>
+        /// <param name="virtualLibraryBasePath">Base path for virtual recommendation libraries.</param>
         public RecommendationEngine(
             IUserDataManager userDataManager,
             IUserManager userManager,
             ILibraryManager libraryManager,
-            ILogger<RecommendationEngine> logger)
+            ILogger<RecommendationEngine> logger,
+            string virtualLibraryBasePath)
         {
             _userDataManager = userDataManager ?? throw new ArgumentNullException(nameof(userDataManager));
             _userManager = userManager ?? throw new ArgumentNullException(nameof(userManager));
             _libraryManager = libraryManager ?? throw new ArgumentNullException(nameof(libraryManager));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+            _virtualLibraryBasePath = virtualLibraryBasePath ?? throw new ArgumentNullException(nameof(virtualLibraryBasePath));
         }
 
         /// <summary>
@@ -106,11 +112,11 @@ namespace Jellyfin.Plugin.LocalRecs.Services
                     userProfile?.WatchedItemCount ?? 0,
                     config.MinWatchedItemsForPersonalization);
 
-                return GenerateColdStartRecommendations(userId, metadata, mediaType, maxResults);
+                return GenerateColdStartRecommendations(userId, embeddings, metadata, mediaType, maxResults);
             }
 
             // Get unwatched candidates
-            var candidates = GetUnwatchedCandidates(userId, embeddings.Keys, metadata, mediaType, config);
+            var candidates = GetUnwatchedCandidates(userId, embeddings, metadata, mediaType);
 
             if (candidates.Count == 0)
             {
@@ -157,13 +163,20 @@ namespace Jellyfin.Plugin.LocalRecs.Services
             return recommendations;
         }
 
+        private static bool HasWatchHistory(MediaBrowser.Controller.Entities.UserItemData userData)
+        {
+            return userData.Played
+                || userData.PlaybackPositionTicks > 0
+                || userData.PlayCount > 0;
+        }
+
         /// <summary>
-        /// Gets the set of item IDs that a user has access to based on their library permissions.
-        /// Uses Jellyfin's built-in user-scoped query which respects library access settings.
+        /// Gets the set of source-library item IDs that a user has access to.
+        /// Excludes virtual recommendation library duplicates and items missing on disk.
         /// </summary>
         /// <param name="user">The Jellyfin user.</param>
-        /// <returns>HashSet of accessible item IDs.</returns>
-        private HashSet<Guid> GetUserAccessibleItemIds(Jellyfin.Database.Implementations.Entities.User user)
+        /// <returns>HashSet of accessible source item IDs.</returns>
+        private HashSet<Guid> GetUserAccessibleSourceItemIds(Jellyfin.Database.Implementations.Entities.User user)
         {
             var accessibleItems = _libraryManager.GetItemList(new InternalItemsQuery(user)
             {
@@ -177,26 +190,21 @@ namespace Jellyfin.Plugin.LocalRecs.Services
                 return new HashSet<Guid>();
             }
 
-            return accessibleItems.Select(i => i.Id).ToHashSet();
+            return accessibleItems
+                .Where(RecommendationItemFilter.IsRecommendableItem)
+                .Where(IsValidSourceLibraryItem)
+                .Select(i => i.Id)
+                .ToHashSet();
         }
 
         /// <summary>
-        /// Gets unwatched candidate items for a user.
-        /// Excludes fully watched items, optionally partially watched series,
-        /// and items from libraries the user cannot access.
+        /// Gets unwatched candidate items for a user from their accessible source library only.
         /// </summary>
-        /// <param name="userId">The user identifier.</param>
-        /// <param name="availableItemIds">Available item IDs from embeddings.</param>
-        /// <param name="metadata">Item metadata dictionary.</param>
-        /// <param name="mediaType">Filter to specific media type.</param>
-        /// <param name="config">Plugin configuration.</param>
-        /// <returns>List of unwatched item IDs.</returns>
         private List<Guid> GetUnwatchedCandidates(
             Guid userId,
-            IEnumerable<Guid> availableItemIds,
+            IReadOnlyDictionary<Guid, ItemEmbedding> embeddings,
             IReadOnlyDictionary<Guid, MediaItemMetadata> metadata,
-            LocalMediaType? mediaType,
-            PluginConfiguration config)
+            LocalMediaType? mediaType)
         {
             var user = _userManager.GetUserById(userId);
             if (user == null)
@@ -205,91 +213,56 @@ namespace Jellyfin.Plugin.LocalRecs.Services
                 return new List<Guid>();
             }
 
-            // Get items accessible to this user based on library permissions
-            var accessibleItemIds = GetUserAccessibleItemIds(user);
+            var accessibleItemIds = GetUserAccessibleSourceItemIds(user);
             _logger.LogDebug(
-                "User {UserId} has access to {Count} items",
+                "User {UserId} has access to {Count} source library items",
                 userId,
                 accessibleItemIds.Count);
 
             var candidates = new List<Guid>();
 
-            foreach (var itemId in availableItemIds)
+            foreach (var itemId in accessibleItemIds)
             {
-                // Get item metadata for type filtering
+                if (!embeddings.ContainsKey(itemId))
+                {
+                    continue;
+                }
+
                 if (!metadata.TryGetValue(itemId, out var itemMetadata))
                 {
                     continue;
                 }
 
-                // Filter by media type if specified
                 if (mediaType.HasValue && itemMetadata.Type != mediaType.Value)
                 {
                     continue;
                 }
 
-                // Exclude items from libraries the user cannot access
-                if (!accessibleItemIds.Contains(itemId))
+                if (IsVirtualLibraryMetadata(itemMetadata))
                 {
                     continue;
                 }
 
-                // Exclude items with insufficient metadata (no genres AND no actors)
-                // These produce unreliable similarity scores
                 if (itemMetadata.Genres.Count == 0 && itemMetadata.Actors.Count == 0)
                 {
                     continue;
                 }
 
                 var item = _libraryManager.GetItemById(itemId);
-                if (item == null)
+                if (item == null || !IsValidSourceLibraryItem(item))
                 {
                     _logger.LogDebug(
-                        "Item not found in library: {ItemId} ({Name})",
+                        "Excluding unavailable item: {ItemId} ({Name})",
                         itemId,
                         itemMetadata.Name);
                     continue;
                 }
 
-                // Log if item path suggests it's from virtual library (shouldn't happen but check)
-                if (itemMetadata.Type == LocalMediaType.Series && item.Path != null && item.Path.Contains("virtual-libraries"))
-                {
-                    _logger.LogWarning(
-                        "Virtual library item in candidates: {Name} (ItemId={ItemId}, Path={Path})",
-                        itemMetadata.Name,
-                        itemId,
-                        item.Path);
-                }
-
-                var userData = _userDataManager.GetUserData(user, item);
-
-                // Exclude fully watched items
-                // For series, userData.Played is not reliable - we need to check episode watch status
-                if (itemMetadata.Type == LocalMediaType.Series && item is Series series)
-                {
-                    // Exclude series with any watched episodes (both in-progress and fully watched)
-                    if (HasAnyWatchedEpisodes(series, user))
-                    {
-                        _logger.LogDebug(
-                            "Excluding series with watch history: {Name}",
-                            itemMetadata.Name);
-                        continue;
-                    }
-                }
-                else if (userData != null && userData.Played)
+                if (!IsUnwatchedForUser(user, item, itemMetadata.Type))
                 {
                     _logger.LogDebug(
-                        "Excluding watched item: {Name} (Played={Played})",
-                        itemMetadata.Name,
-                        userData.Played);
-                    continue;
-                }
-
-                // Exclude items with any playback progress (user is currently watching or has started)
-                // These items will be removed from virtual library by PlayStatusSyncService
-                // and should not be re-added to recommendations until fully unwatched
-                if (userData != null && userData.PlaybackPositionTicks > 0)
-                {
+                        "Excluding watched or in-progress item: {Name}",
+                        itemMetadata.Name);
                     continue;
                 }
 
@@ -300,37 +273,95 @@ namespace Jellyfin.Plugin.LocalRecs.Services
         }
 
         /// <summary>
-        /// Checks if a series has any watched episodes.
-        /// Series with any watch history (in-progress or fully watched) should be excluded
-        /// from recommendations since the user has already engaged with them.
+        /// Returns true when the item belongs to the user's real source libraries and exists on disk.
         /// </summary>
-        /// <param name="series">The series to check.</param>
-        /// <param name="user">The user to check watch status for.</param>
-        /// <returns>True if the series has at least one watched episode.</returns>
-        private bool HasAnyWatchedEpisodes(Series series, Jellyfin.Database.Implementations.Entities.User user)
+        private bool IsValidSourceLibraryItem(BaseItem item)
         {
-            // Query for any watched episodes in this series
-            var watchedEpisodes = _libraryManager.GetItemList(new InternalItemsQuery(user)
+            if (!RecommendationItemFilter.IsRecommendableItem(item))
+            {
+                return false;
+            }
+
+            if (string.IsNullOrEmpty(item.Path))
+            {
+                return false;
+            }
+
+            if (VirtualLibraryPaths.IsUnderBasePath(item.Path, _virtualLibraryBasePath))
+            {
+                return false;
+            }
+
+            if (!File.Exists(item.Path) && !Directory.Exists(item.Path))
+            {
+                return false;
+            }
+
+            return true;
+        }
+
+        private bool IsVirtualLibraryMetadata(MediaItemMetadata metadata)
+        {
+            return !string.IsNullOrEmpty(metadata.Path)
+                && VirtualLibraryPaths.IsUnderBasePath(metadata.Path, _virtualLibraryBasePath);
+        }
+
+        /// <summary>
+        /// Returns true when the user has not watched or started the item.
+        /// </summary>
+        private bool IsUnwatchedForUser(
+            Jellyfin.Database.Implementations.Entities.User user,
+            BaseItem item,
+            LocalMediaType mediaType)
+        {
+            if (mediaType == LocalMediaType.Series && item is Series series)
+            {
+                return !HasAnyWatchHistory(series, user);
+            }
+
+            var userData = _userDataManager.GetUserData(user, item);
+            if (userData == null)
+            {
+                return true;
+            }
+
+            return !HasWatchHistory(userData);
+        }
+
+        /// <summary>
+        /// Checks if a series has any watch history on the series itself or any episode.
+        /// </summary>
+        private bool HasAnyWatchHistory(Series series, Jellyfin.Database.Implementations.Entities.User user)
+        {
+            var seriesUserData = _userDataManager.GetUserData(user, series);
+            if (seriesUserData != null && HasWatchHistory(seriesUserData))
+            {
+                return true;
+            }
+
+            var episodes = _libraryManager.GetItemList(new InternalItemsQuery(user)
             {
                 IncludeItemTypes = new[] { BaseItemKind.Episode },
                 AncestorIds = new[] { series.Id },
-                IsPlayed = true,
-                Limit = 1, // We only need to know if any exist
                 Recursive = true
             });
 
-            return watchedEpisodes.Count > 0;
+            foreach (var episode in episodes)
+            {
+                var episodeUserData = _userDataManager.GetUserData(user, episode);
+                if (episodeUserData != null && HasWatchHistory(episodeUserData))
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         /// <summary>
         /// Scores a candidate item against the user's taste profile using cosine similarity
         /// and optionally rating proximity.
         /// </summary>
-        /// <param name="userProfile">The user's taste profile.</param>
-        /// <param name="candidateEmbedding">The candidate item's embedding.</param>
-        /// <param name="itemMetadata">The candidate item's metadata.</param>
-        /// <param name="config">Plugin configuration.</param>
-        /// <returns>Scored recommendation.</returns>
         private ScoredRecommendation ScoreCandidate(
             UserProfile userProfile,
             ItemEmbedding candidateEmbedding,
@@ -384,13 +415,9 @@ namespace Jellyfin.Plugin.LocalRecs.Services
         /// Generates recommendations for users with insufficient watch history (cold-start).
         /// Returns top-rated items from the library.
         /// </summary>
-        /// <param name="userId">The user identifier.</param>
-        /// <param name="metadata">Item metadata dictionary.</param>
-        /// <param name="mediaType">Filter to specific media type.</param>
-        /// <param name="maxResults">Maximum number of recommendations.</param>
-        /// <returns>List of top-rated items.</returns>
         private List<ScoredRecommendation> GenerateColdStartRecommendations(
             Guid userId,
+            IReadOnlyDictionary<Guid, ItemEmbedding> embeddings,
             IReadOnlyDictionary<Guid, MediaItemMetadata> metadata,
             LocalMediaType? mediaType,
             int maxResults)
@@ -399,54 +426,52 @@ namespace Jellyfin.Plugin.LocalRecs.Services
                 "Generating cold-start recommendations for user {UserId}",
                 userId);
 
-            // Filter to media type if specified
-            var candidateMetadata = metadata.Values.AsEnumerable();
-
-            if (mediaType.HasValue)
-            {
-                candidateMetadata = candidateMetadata.Where(m => m.Type == mediaType.Value);
-            }
-
-            // Get unwatched items that the user has access to
             var user = _userManager.GetUserById(userId);
-            var unwatchedCandidates = new List<MediaItemMetadata>();
-
-            if (user != null)
-            {
-                // Filter to items from libraries the user can access
-                var accessibleItemIds = GetUserAccessibleItemIds(user);
-
-                foreach (var item in candidateMetadata)
-                {
-                    // Exclude items from inaccessible libraries
-                    if (!accessibleItemIds.Contains(item.Id))
-                    {
-                        continue;
-                    }
-
-                    var libraryItem = _libraryManager.GetItemById(item.Id);
-                    if (libraryItem == null)
-                    {
-                        continue;
-                    }
-
-                    var userData = _userDataManager.GetUserData(user, libraryItem);
-                    if (userData != null && userData.Played)
-                    {
-                        continue; // Skip watched items
-                    }
-
-                    unwatchedCandidates.Add(item);
-                }
-            }
-            else
+            if (user == null)
             {
                 _logger.LogWarning("User not found for cold-start recommendations: {UserId}", userId);
                 return new List<ScoredRecommendation>();
             }
 
-            // Sort by community rating (primary) and critic rating (secondary)
-            // Normalize scores to [0-1] range to match personalized recommendation scores
+            var accessibleItemIds = GetUserAccessibleSourceItemIds(user);
+            var unwatchedCandidates = new List<MediaItemMetadata>();
+
+            foreach (var itemId in accessibleItemIds)
+            {
+                if (!embeddings.ContainsKey(itemId))
+                {
+                    continue;
+                }
+
+                if (!metadata.TryGetValue(itemId, out var itemMetadata))
+                {
+                    continue;
+                }
+
+                if (mediaType.HasValue && itemMetadata.Type != mediaType.Value)
+                {
+                    continue;
+                }
+
+                if (IsVirtualLibraryMetadata(itemMetadata))
+                {
+                    continue;
+                }
+
+                var libraryItem = _libraryManager.GetItemById(itemId);
+                if (libraryItem == null || !IsValidSourceLibraryItem(libraryItem))
+                {
+                    continue;
+                }
+
+                if (!IsUnwatchedForUser(user, libraryItem, itemMetadata.Type))
+                {
+                    continue;
+                }
+
+                unwatchedCandidates.Add(itemMetadata);
+            }
+
             var topRated = unwatchedCandidates
                 .OrderByDescending(m => m.CommunityRating ?? 0)
                 .ThenByDescending(m => m.CriticRating ?? 0)

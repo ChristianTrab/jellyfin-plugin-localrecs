@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
 using System.Linq;
 using FluentAssertions;
 using Jellyfin.Database.Implementations.Entities;
@@ -9,6 +10,7 @@ using Jellyfin.Plugin.LocalRecs.Models;
 using Jellyfin.Plugin.LocalRecs.Services;
 using Jellyfin.Plugin.LocalRecs.Tests.Fixtures;
 using MediaBrowser.Controller.Entities;
+using MediaBrowser.Controller.Entities.Movies;
 using MediaBrowser.Controller.Library;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
@@ -30,17 +32,24 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Domain
         private readonly Guid _testUserId;
         private readonly User _testUser;
         private readonly List<BaseItem> _registeredItems = new List<BaseItem>();
+        private readonly string _virtualLibraryBasePath;
+        private readonly string _testMediaRoot;
 
         public RecommendationEngineTests()
         {
             _mockUserDataManager = new Mock<IUserDataManager>();
             _mockUserManager = new Mock<IUserManager>();
             _mockLibraryManager = new Mock<ILibraryManager>();
+            _virtualLibraryBasePath = Path.Combine(Path.GetTempPath(), "localrecs-virtual-" + Guid.NewGuid());
+            _testMediaRoot = Path.Combine(Path.GetTempPath(), "localrecs-media-" + Guid.NewGuid());
+            Directory.CreateDirectory(_testMediaRoot);
+
             _engine = new RecommendationEngine(
                 _mockUserDataManager.Object,
                 _mockUserManager.Object,
                 _mockLibraryManager.Object,
-                NullLogger<RecommendationEngine>.Instance);
+                NullLogger<RecommendationEngine>.Instance,
+                _virtualLibraryBasePath);
 
             _testUserId = Guid.NewGuid();
             _testUser = new User("TestUser", "Default", "Default");
@@ -621,26 +630,24 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Domain
 
         private void SetupWatchedItem(MediaItemMetadata item)
         {
-            var mockItem = new Mock<BaseItem>();
-            mockItem.Object.Id = item.Id;
-            _mockLibraryManager.Setup(m => m.GetItemById(item.Id)).Returns(mockItem.Object);
-            _registeredItems.Add(mockItem.Object);
+            var libraryItem = CreateLibraryItem(item);
+            _mockLibraryManager.Setup(m => m.GetItemById(item.Id)).Returns(libraryItem);
+            _registeredItems.Add(libraryItem);
 
             var userData = new UserItemData
             {
                 Key = item.Id.ToString(),
                 Played = true
             };
-            _mockUserDataManager.Setup(m => m.GetUserData(_testUser, mockItem.Object))
+            _mockUserDataManager.Setup(m => m.GetUserData(_testUser, libraryItem))
                 .Returns(userData);
         }
 
         private void SetupUnwatchedItem(MediaItemMetadata item)
         {
-            var mockItem = new Mock<BaseItem>();
-            mockItem.Object.Id = item.Id;
-            _mockLibraryManager.Setup(m => m.GetItemById(item.Id)).Returns(mockItem.Object);
-            _registeredItems.Add(mockItem.Object);
+            var libraryItem = CreateLibraryItem(item);
+            _mockLibraryManager.Setup(m => m.GetItemById(item.Id)).Returns(libraryItem);
+            _registeredItems.Add(libraryItem);
 
             var userData = new UserItemData
             {
@@ -648,16 +655,15 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Domain
                 Played = false,
                 PlaybackPositionTicks = 0
             };
-            _mockUserDataManager.Setup(m => m.GetUserData(_testUser, mockItem.Object))
+            _mockUserDataManager.Setup(m => m.GetUserData(_testUser, libraryItem))
                 .Returns(userData);
         }
 
         private void SetupPartiallyWatchedItem(MediaItemMetadata item, long playbackPositionTicks)
         {
-            var mockItem = new Mock<BaseItem>();
-            mockItem.Object.Id = item.Id;
-            _mockLibraryManager.Setup(m => m.GetItemById(item.Id)).Returns(mockItem.Object);
-            _registeredItems.Add(mockItem.Object);
+            var libraryItem = CreateLibraryItem(item);
+            _mockLibraryManager.Setup(m => m.GetItemById(item.Id)).Returns(libraryItem);
+            _registeredItems.Add(libraryItem);
 
             var userData = new UserItemData
             {
@@ -665,7 +671,7 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Domain
                 Played = false,
                 PlaybackPositionTicks = playbackPositionTicks
             };
-            _mockUserDataManager.Setup(m => m.GetUserData(_testUser, mockItem.Object))
+            _mockUserDataManager.Setup(m => m.GetUserData(_testUser, libraryItem))
                 .Returns(userData);
         }
 
@@ -675,18 +681,33 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Domain
         /// </summary>
         private void SetupUserVisibleItems(IEnumerable<MediaItemMetadata> visibleItems)
         {
-            var baseItems = new List<BaseItem>();
-
-            foreach (var item in visibleItems)
-            {
-                var mockItem = new Mock<BaseItem>();
-                mockItem.Object.Id = item.Id;
-                baseItems.Add(mockItem.Object);
-            }
+            var baseItems = visibleItems.Select(CreateLibraryItem).ToList();
 
             // When GetItemList is called with any query (user-scoped), return only visible items
             _mockLibraryManager.Setup(m => m.GetItemList(It.IsAny<InternalItemsQuery>()))
                 .Returns(baseItems);
+        }
+
+        private Movie CreateLibraryItem(MediaItemMetadata item)
+        {
+            var libraryItem = new Movie
+            {
+                Id = item.Id,
+                Name = item.Name
+            };
+            EnsureSourcePath(libraryItem);
+            return libraryItem;
+        }
+
+        private void EnsureSourcePath(BaseItem item)
+        {
+            var path = Path.Combine(_testMediaRoot, item.Id + ".mkv");
+            if (!File.Exists(path))
+            {
+                File.WriteAllText(path, "test");
+            }
+
+            item.Path = path;
         }
 
         #region Library Access Filtering Tests
@@ -831,6 +852,164 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Domain
             recommendations.Should().HaveCountGreaterThanOrEqualTo(
                 Math.Min(unwatchedMovies.Count, 10),
                 "all items are accessible so all eligible items should be candidates");
+        }
+
+        [Fact]
+        public void GenerateRecommendations_ExcludesPartiallyWatchedItems()
+        {
+            var library = TestMediaLibrary.CreateTestMovies();
+            var embeddings = CreateEmbeddings(library);
+            var metadata = library.ToDictionary(i => i.Id, i => i);
+
+            SetupUserVisibleItems(library);
+
+            var watched = library.First();
+            SetupWatchedItem(watched);
+
+            var inProgress = library.Skip(1).First();
+            SetupPartiallyWatchedItem(inProgress, playbackPositionTicks: 600000000);
+
+            foreach (var movie in library.Skip(2))
+            {
+                SetupUnwatchedItem(movie);
+            }
+
+            var userProfile = CreateGenericUserProfile(embeddings, new[] { watched.Id });
+
+            var recommendations = _engine.GenerateRecommendations(
+                _testUserId,
+                userProfile,
+                embeddings,
+                metadata,
+                _config,
+                maxResults: 10);
+
+            recommendations.Should().NotContain(r => r.ItemId == watched.Id);
+            recommendations.Should().NotContain(r => r.ItemId == inProgress.Id);
+        }
+
+        [Fact]
+        public void GenerateRecommendations_ExcludesVirtualLibraryDuplicates()
+        {
+            var library = TestMediaLibrary.CreateTestMovies();
+            var embeddings = CreateEmbeddings(library);
+            var metadata = library.ToDictionary(i => i.Id, i => i);
+
+            var virtualItem = library.First();
+            var realItems = library.Skip(1).ToList();
+            SetupUserVisibleItems(library);
+
+            foreach (var movie in realItems)
+            {
+                SetupUnwatchedItem(movie);
+            }
+
+            var virtualLibraryItem = new Movie
+            {
+                Id = virtualItem.Id,
+                Name = virtualItem.Name
+            };
+            var virtualPath = Path.Combine(_virtualLibraryBasePath, Guid.NewGuid().ToString(), "movies", "show.mkv");
+            Directory.CreateDirectory(Path.GetDirectoryName(virtualPath)!);
+            File.WriteAllText(virtualPath, "test");
+            virtualLibraryItem.Path = virtualPath;
+            _mockLibraryManager.Setup(m => m.GetItemById(virtualItem.Id)).Returns(virtualLibraryItem);
+
+            var userProfile = CreateGenericUserProfile(embeddings, realItems.Take(3).Select(m => m.Id));
+
+            var recommendations = _engine.GenerateRecommendations(
+                _testUserId,
+                userProfile,
+                embeddings,
+                metadata,
+                _config,
+                maxResults: 10);
+
+            recommendations.Should().NotContain(r => r.ItemId == virtualItem.Id);
+        }
+
+        [Fact]
+        public void GenerateRecommendations_ExcludesItemsMissingOnDisk()
+        {
+            var library = TestMediaLibrary.CreateTestMovies();
+            var embeddings = CreateEmbeddings(library);
+            var metadata = library.ToDictionary(i => i.Id, i => i);
+
+            SetupUserVisibleItems(library);
+
+            var missing = library.First();
+            var available = library.Skip(1).ToList();
+
+            var missingItem = new Movie
+            {
+                Id = missing.Id,
+                Name = missing.Name,
+                Path = Path.Combine(_testMediaRoot, "does-not-exist.mkv")
+            };
+            _mockLibraryManager.Setup(m => m.GetItemById(missing.Id)).Returns(missingItem);
+
+            foreach (var movie in available)
+            {
+                SetupUnwatchedItem(movie);
+            }
+
+            var userProfile = CreateGenericUserProfile(embeddings, available.Take(3).Select(m => m.Id));
+
+            var recommendations = _engine.GenerateRecommendations(
+                _testUserId,
+                userProfile,
+                embeddings,
+                metadata,
+                _config,
+                maxResults: 10);
+
+            recommendations.Should().NotContain(r => r.ItemId == missing.Id);
+        }
+
+        [Fact]
+        public void GenerateRecommendations_ExcludesBoxSetCollections()
+        {
+            var library = TestMediaLibrary.CreateTestMovies();
+            var embeddings = CreateEmbeddings(library);
+            var metadata = library.ToDictionary(i => i.Id, i => i);
+
+            var collectionItem = library.First();
+            var realItems = library.Skip(1).ToList();
+
+            var collectionPath = Path.Combine(_testMediaRoot, "Collections", "Marvel Collection");
+            Directory.CreateDirectory(collectionPath);
+            var boxSet = new BoxSet
+            {
+                Id = collectionItem.Id,
+                Name = "Marvel Collection",
+                Path = collectionPath
+            };
+
+            var realBaseItems = new List<BaseItem>();
+            realBaseItems.AddRange(realItems.Select(CreateLibraryItem));
+            realBaseItems.Add(boxSet);
+
+            _mockLibraryManager.Setup(m => m.GetItemList(It.IsAny<InternalItemsQuery>()))
+                .Returns(realBaseItems);
+
+            foreach (var movie in realItems)
+            {
+                SetupUnwatchedItem(movie);
+            }
+
+            _mockLibraryManager.Setup(m => m.GetItemById(collectionItem.Id)).Returns(boxSet);
+
+            var userProfile = CreateGenericUserProfile(embeddings, realItems.Take(3).Select(m => m.Id));
+
+            var recommendations = _engine.GenerateRecommendations(
+                _testUserId,
+                userProfile,
+                embeddings,
+                metadata,
+                _config,
+                maxResults: 10);
+
+            recommendations.Should().NotContain(r => r.ItemId == collectionItem.Id);
         }
 
         #endregion

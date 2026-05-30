@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using Jellyfin.Data.Enums;
 using Jellyfin.Plugin.LocalRecs.Models;
@@ -140,12 +141,34 @@ namespace Jellyfin.Plugin.LocalRecs.Services
                 return null;
             }
 
+            if (!RecommendationItemFilter.IsRecommendableItem(item))
+            {
+                _logger.LogDebug(
+                    "Skipping non-recommendable item type {ItemType}: {ItemName} ({ItemId})",
+                    item.GetType().Name,
+                    item.Name,
+                    item.Id);
+                return null;
+            }
+
             // Skip items from virtual recommendation libraries (symlinks under our base path)
             if (!string.IsNullOrEmpty(item.Path) &&
                 VirtualLibraryPaths.IsUnderBasePath(item.Path, _virtualLibraryBasePath))
             {
                 _logger.LogDebug(
                     "Skipping virtual library item: {ItemName} ({ItemId}) at {Path}",
+                    item.Name,
+                    item.Id,
+                    item.Path);
+                return null;
+            }
+
+            if (!string.IsNullOrEmpty(item.Path)
+                && !File.Exists(item.Path)
+                && !Directory.Exists(item.Path))
+            {
+                _logger.LogDebug(
+                    "Skipping item missing on disk: {ItemName} ({ItemId}) at {Path}",
                     item.Name,
                     item.Id,
                     item.Path);

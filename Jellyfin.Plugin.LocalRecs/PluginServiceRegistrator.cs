@@ -37,7 +37,12 @@ namespace Jellyfin.Plugin.LocalRecs
             serviceCollection.AddSingleton<UserProfileService>();
 
             // Phase 5: Recommendation Engine
-            serviceCollection.AddSingleton<RecommendationEngine>();
+            serviceCollection.AddSingleton(sp => new RecommendationEngine(
+                sp.GetRequiredService<MediaBrowser.Controller.Library.IUserDataManager>(),
+                sp.GetRequiredService<MediaBrowser.Controller.Library.IUserManager>(),
+                sp.GetRequiredService<MediaBrowser.Controller.Library.ILibraryManager>(),
+                sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<RecommendationEngine>>(),
+                GetVirtualLibraryBasePath(sp)));
 
             // Phase 6: Recommendation Refresh Service
             serviceCollection.AddSingleton<RecommendationRefreshService>();

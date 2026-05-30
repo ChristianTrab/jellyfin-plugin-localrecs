@@ -5,7 +5,9 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using Jellyfin.Plugin.LocalRecs.Models;
+using Jellyfin.Plugin.LocalRecs.Services;
 using MediaBrowser.Controller.Entities;
+using MediaBrowser.Controller.Entities.Movies;
 using MediaBrowser.Controller.Entities.TV;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Model.Entities;
@@ -320,13 +322,27 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
                         continue;
                     }
 
+                    if (!RecommendationItemFilter.IsRecommendableItem(item))
+                    {
+                        _logger.LogDebug(
+                            "Skipping collection or unsupported item type {ItemType}: {ItemName} ({ItemId})",
+                            item.GetType().Name,
+                            item.Name,
+                            rec.ItemId);
+                        continue;
+                    }
+
                     if (item is Series series)
                     {
                         CreateSeriesStructure(libraryPath, series);
                     }
-                    else
+                    else if (item is Movie)
                     {
                         CreateMovieFolderStructure(libraryPath, item);
+                    }
+                    else
+                    {
+                        continue;
                     }
 
                     createdCount++;
