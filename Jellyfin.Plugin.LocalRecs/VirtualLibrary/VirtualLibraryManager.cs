@@ -47,6 +47,22 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
         }
 
         /// <summary>
+        /// Counts symlinked media files under a virtual library directory.
+        /// </summary>
+        /// <param name="libraryPath">The library directory path.</param>
+        /// <returns>Number of symbolic links found.</returns>
+        public static int CountMediaSymlinks(string libraryPath)
+        {
+            if (!Directory.Exists(libraryPath))
+            {
+                return 0;
+            }
+
+            return Directory.EnumerateFiles(libraryPath, "*", SearchOption.AllDirectories)
+                .Count(VirtualLibraryPaths.IsSymbolicLink);
+        }
+
+        /// <summary>
         /// Gets the virtual library path for a specific user and media type.
         /// </summary>
         /// <param name="userId">User ID.</param>
@@ -216,11 +232,13 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
                 }
             }
 
-            _logger.LogDebug(
-                "Updated {MediaType} recommendations for user {UserId}: {Created} items created",
+            _logger.LogInformation(
+                "Updated {MediaType} recommendations for user {UserId}: {Created} items, {SymlinkCount} symlinks at {Path}",
                 mediaType,
                 userId,
-                createdCount);
+                createdCount,
+                CountMediaSymlinks(libraryPath),
+                libraryPath);
 
             return createdCount;
         }
@@ -317,11 +335,16 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
                 var seasonFolder = seasonNumber == 0 ? "Specials" : $"Season {seasonNumber:D2}";
                 var seasonPath = Path.Combine(seriesPath, seasonFolder);
                 Directory.CreateDirectory(seasonPath);
+                WriteSeasonNfo(seasonPath, seasonNumber);
 
                 foreach (var episode in seasonGroup)
                 {
-                    if (string.IsNullOrEmpty(episode.Path))
+                    if (string.IsNullOrEmpty(episode.Path) || !File.Exists(episode.Path))
                     {
+                        _logger.LogDebug(
+                            "Skipping episode {EpisodeName} ({EpisodeId}): path missing or not on disk",
+                            episode.Name,
+                            episode.Id);
                         continue;
                     }
 
@@ -359,12 +382,20 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
         /// </summary>
         private void CreateSymlink(string linkPath, string targetPath)
         {
+            if (!File.Exists(targetPath))
+            {
+                throw new FileNotFoundException("Symlink target does not exist", targetPath);
+            }
+
             if (File.Exists(linkPath))
             {
                 File.Delete(linkPath);
             }
 
-            File.CreateSymbolicLink(linkPath, targetPath);
+            var linkDirectory = Path.GetDirectoryName(Path.GetFullPath(linkPath))
+                ?? throw new InvalidOperationException($"Invalid symlink path: {linkPath}");
+            var relativeTarget = Path.GetRelativePath(linkDirectory, Path.GetFullPath(targetPath));
+            File.CreateSymbolicLink(linkPath, relativeTarget);
         }
 
         private void LogSymlinkPermissionError(UnauthorizedAccessException ex, Guid itemId)
@@ -508,23 +539,40 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
                 sb.Append("  <year>").Append(series.ProductionYear.Value).AppendLine("</year>");
             }
 
-            var providerIds = series.ProviderIds ?? new Dictionary<string, string>();
-            if (providerIds.TryGetValue("Tmdb", out var tmdb) && !string.IsNullOrEmpty(tmdb))
-            {
-                sb.Append("  <tmdbid>").Append(XmlEscape(tmdb)).AppendLine("</tmdbid>");
-                sb.Append("  <uniqueid type=\"tmdb\">").Append(XmlEscape(tmdb)).AppendLine("</uniqueid>");
-            }
+            var tmdb = series.GetProviderId(MetadataProvider.Tmdb);
+            var tvdb = series.GetProviderId(MetadataProvider.Tvdb);
+            var imdb = series.GetProviderId(MetadataProvider.Imdb);
 
-            if (providerIds.TryGetValue("Tvdb", out var tvdb) && !string.IsNullOrEmpty(tvdb))
+            if (!string.IsNullOrEmpty(tvdb))
             {
                 sb.Append("  <tvdbid>").Append(XmlEscape(tvdb)).AppendLine("</tvdbid>");
-                sb.Append("  <uniqueid type=\"tvdb\">").Append(XmlEscape(tvdb)).AppendLine("</uniqueid>");
+                sb.Append("  <uniqueid default=\"true\" type=\"tvdb\">").Append(XmlEscape(tvdb)).AppendLine("</uniqueid>");
             }
 
-            if (providerIds.TryGetValue("Imdb", out var imdb) && !string.IsNullOrEmpty(imdb))
+            if (!string.IsNullOrEmpty(tmdb))
+            {
+                sb.Append("  <tmdbid>").Append(XmlEscape(tmdb)).AppendLine("</tmdbid>");
+                if (string.IsNullOrEmpty(tvdb))
+                {
+                    sb.Append("  <uniqueid default=\"true\" type=\"tmdb\">").Append(XmlEscape(tmdb)).AppendLine("</uniqueid>");
+                }
+                else
+                {
+                    sb.Append("  <uniqueid type=\"tmdb\">").Append(XmlEscape(tmdb)).AppendLine("</uniqueid>");
+                }
+            }
+
+            if (!string.IsNullOrEmpty(imdb))
             {
                 sb.Append("  <imdbid>").Append(XmlEscape(imdb)).AppendLine("</imdbid>");
-                sb.Append("  <uniqueid type=\"imdb\">").Append(XmlEscape(imdb)).AppendLine("</uniqueid>");
+                if (string.IsNullOrEmpty(tvdb) && string.IsNullOrEmpty(tmdb))
+                {
+                    sb.Append("  <uniqueid default=\"true\" type=\"imdb\">").Append(XmlEscape(imdb)).AppendLine("</uniqueid>");
+                }
+                else
+                {
+                    sb.Append("  <uniqueid type=\"imdb\">").Append(XmlEscape(imdb)).AppendLine("</uniqueid>");
+                }
             }
 
             sb.AppendLine("</tvshow>");
@@ -536,6 +584,25 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "Failed to write tvshow.nfo for {SeriesName}", series.Name);
+            }
+        }
+
+        private void WriteSeasonNfo(string seasonPath, int seasonNumber)
+        {
+            var nfoPath = Path.Combine(seasonPath, "season.nfo");
+            var sb = new StringBuilder();
+            sb.AppendLine("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>");
+            sb.AppendLine("<season>");
+            sb.Append("  <seasonnumber>").Append(seasonNumber).AppendLine("</seasonnumber>");
+            sb.AppendLine("</season>");
+
+            try
+            {
+                File.WriteAllText(nfoPath, sb.ToString(), new UTF8Encoding(false));
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to write season.nfo for season {SeasonNumber}", seasonNumber);
             }
         }
 
@@ -575,12 +642,16 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
 
         private string GenerateEpisodeBaseFilename(Episode episode)
         {
-            var seriesName = SanitizeFilename(episode.SeriesName ?? "Unknown");
+            var seriesName = SanitizeFilename(episode.FindSeriesName() ?? episode.SeriesName ?? "Unknown");
             var seasonNum = episode.ParentIndexNumber ?? 0;
             var episodeNum = episode.IndexNumber ?? 0;
             var episodeName = SanitizeFilename(episode.Name ?? "Episode");
 
-            return $"{seriesName} - S{seasonNum:D2}E{episodeNum:D2} - {episodeName}";
+            var episodeCode = episode.IndexNumberEnd.HasValue && episode.IndexNumberEnd.Value > episodeNum
+                ? $"S{seasonNum:D2}E{episodeNum:D2}E{episode.IndexNumberEnd.Value:D2}"
+                : $"S{seasonNum:D2}E{episodeNum:D2}";
+
+            return $"{seriesName} - {episodeCode} - {episodeName}";
         }
 
         private string GetProviderId(BaseItem item)
