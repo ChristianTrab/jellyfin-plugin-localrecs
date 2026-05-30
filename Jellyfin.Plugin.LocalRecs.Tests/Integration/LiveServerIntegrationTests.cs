@@ -161,10 +161,10 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Integration
 
             // Step 5: Generate recommendations (manually, since we can't use the full service without Jellyfin DI)
             _output.WriteLine("Generating recommendations...");
-            
+
             // Generate movie recommendations (25)
             var movieRecommendations = GenerateRecommendations(library, embeddings, watchedItems, userProfile, MediaType.Movie, 25);
-            
+
             // Generate TV recommendations (25)
             var tvRecommendations = GenerateRecommendations(library, embeddings, watchedItems, userProfile, MediaType.Series, 25);
 
@@ -272,7 +272,7 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Integration
                 _output.WriteLine($"Genres: {string.Join(", ", devilMayCry.Genres)}");
                 _output.WriteLine($"Actors: {string.Join(", ", devilMayCry.Actors)}");
                 _output.WriteLine($"Directors: {string.Join(", ", devilMayCry.Directors)}");
-                
+
                 // Find watched items with similar genres
                 var similarWatched = watchedItems
                     .Where(w => w.Genres.Intersect(devilMayCry.Genres).Any())
@@ -294,7 +294,7 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Integration
                 _output.WriteLine($"Genres: {string.Join(", ", myHeroAcademia.Genres)}");
                 _output.WriteLine($"Actors: {string.Join(", ", myHeroAcademia.Actors)}");
                 _output.WriteLine($"Directors: {string.Join(", ", myHeroAcademia.Directors)}");
-                
+
                 var similarWatched = watchedItems
                     .Where(w => w.Genres.Intersect(myHeroAcademia.Genres).Any())
                     .OrderByDescending(w => w.Genres.Intersect(myHeroAcademia.Genres).Count())
@@ -710,7 +710,7 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Integration
                 {
                     bool isFavorite = userDataForWeight.TryGetProperty("IsFavorite", out var fav) && fav.GetBoolean();
                     int playCount = userDataForWeight.TryGetProperty("PlayCount", out var pc) ? pc.GetInt32() : 1;
-                    
+
                     // Ensure playCount is at least 1 for watched items (Jellyfin sometimes returns 0)
                     if (playCount < 1)
                     {

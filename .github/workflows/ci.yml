@@ -1,0 +1,29 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 9.0.x
+
+      - name: Restore dependencies
+        run: dotnet restore Jellyfin.Plugin.LocalRecs.sln
+
+      - name: Check formatting
+        run: dotnet format Jellyfin.Plugin.LocalRecs.sln --verify-no-changes
+
+      - name: Build (strict — catches deprecated APIs, unused vars, naming violations)
+        run: dotnet build Jellyfin.Plugin.LocalRecs.sln --configuration Release --no-restore /p:TreatWarningsAsErrors=true
+
+      - name: Run unit tests
+        run: dotnet test Jellyfin.Plugin.LocalRecs.Tests/Jellyfin.Plugin.LocalRecs.Tests.csproj --configuration Release --no-build

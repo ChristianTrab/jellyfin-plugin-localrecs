@@ -52,7 +52,7 @@ namespace Jellyfin.Plugin.LocalRecs
             {
                 new PluginPageInfo
                 {
-                    Name = this.Name,
+                    Name = Name,
                     EmbeddedResourcePath = string.Format("{0}.Configuration.configPage.html", GetType().Namespace)
                 }
             };

@@ -97,11 +97,11 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Domain
             recommendations.Should().HaveCountLessOrEqualTo(5);
 
             // At least one sci-fi movie should be highly recommended
-            var sciFiMovies = library.Where(m => m.Genres.Contains("Science Fiction") 
-                && m.Id != matrix.Id 
-                && m.Id != bladeRunner.Id 
+            var sciFiMovies = library.Where(m => m.Genres.Contains("Science Fiction")
+                && m.Id != matrix.Id
+                && m.Id != bladeRunner.Id
                 && m.Id != inception.Id).Select(m => m.Id).ToHashSet();
-            
+
             var sciFiRecs = recommendations.Where(r => sciFiMovies.Contains(r.ItemId)).ToList();
             sciFiRecs.Should().NotBeEmpty("at least one sci-fi movie should be recommended to sci-fi lover");
 
@@ -483,7 +483,7 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Domain
             // Assert
             recommendations.Should().NotBeEmpty();
             recommendations.Should().HaveCount(25);
-            
+
             // Note: Acceptance criteria is <500ms for production, but mocking overhead adds significant time
             // In production without mocks and with optimized Jellyfin calls, this will be much faster
             stopwatch.ElapsedMilliseconds.Should().BeLessThan(5000,

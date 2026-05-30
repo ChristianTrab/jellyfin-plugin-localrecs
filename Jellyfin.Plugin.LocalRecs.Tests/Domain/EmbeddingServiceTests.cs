@@ -45,7 +45,7 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Domain
             embedding.Should().NotBeNull();
             embedding.ItemId.Should().Be(matrix.Id);
             embedding.Vector.Should().NotBeEmpty();
-            
+
             // Vector should be normalized (magnitude = 1.0)
             var magnitude = VectorMath.Magnitude(embedding.Vector);
             magnitude.Should().BeApproximately(1.0f, 0.001f);
@@ -57,7 +57,7 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Domain
             // The Matrix and Inception are both sci-fi action movies
             var items = TestMediaLibrary.CreateTestMovies();
             var vocabulary = _vocabularyBuilder.BuildVocabulary(items);
-            
+
             var matrix = items.First(m => m.Name == "The Matrix");
             var inception = items.First(m => m.Name == "Inception");
 
@@ -65,7 +65,7 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Domain
             var embedding2 = _embeddingService.ComputeEmbedding(inception, vocabulary);
 
             var similarity = VectorMath.CosineSimilarity(embedding1.Vector, embedding2.Vector);
-            
+
             // Should have positive similarity due to shared genres (Sci-Fi, Action)
             // Note: TF-IDF vectors are sparse, so similarity values are typically lower than 0.5
             similarity.Should().BeGreaterThan(0.0f, "they share Science Fiction and Action genres");
@@ -77,7 +77,7 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Domain
             // The Matrix (sci-fi action) vs Groundhog Day (comedy)
             var items = TestMediaLibrary.CreateTestMovies();
             var vocabulary = _vocabularyBuilder.BuildVocabulary(items);
-            
+
             var matrix = items.First(m => m.Name == "The Matrix");
             var groundhogDay = items.First(m => m.Name == "Groundhog Day");
 
@@ -85,15 +85,15 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Domain
             var embedding2 = _embeddingService.ComputeEmbedding(groundhogDay, vocabulary);
 
             var similarity = VectorMath.CosineSimilarity(embedding1.Vector, embedding2.Vector);
-            
+
             // Should have lower similarity - different genres, actors, directors
             var matrixInceptionSim = VectorMath.CosineSimilarity(
                 embedding1.Vector,
                 _embeddingService.ComputeEmbedding(
-                    items.First(m => m.Name == "Inception"), 
+                    items.First(m => m.Name == "Inception"),
                     vocabulary).Vector);
-            
-            similarity.Should().BeLessThan(matrixInceptionSim, 
+
+            similarity.Should().BeLessThan(matrixInceptionSim,
                 "Matrix/Groundhog Day have no shared genres vs Matrix/Inception sharing Sci-Fi + Action");
         }
 
@@ -103,7 +103,7 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Domain
             // The Dark Knight and Inception - both by Christopher Nolan
             var items = TestMediaLibrary.CreateTestMovies();
             var vocabulary = _vocabularyBuilder.BuildVocabulary(items);
-            
+
             var darkKnight = items.First(m => m.Name == "The Dark Knight");
             var inception = items.First(m => m.Name == "Inception");
             var alien = items.First(m => m.Name == "Alien");
@@ -126,9 +126,9 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Domain
             var items = TestMediaLibrary.CreateTestMovies();
             var vocabulary = _vocabularyBuilder.BuildVocabulary(items);
 
-            var expectedDim = vocabulary.Genres.Count + 
-                             vocabulary.Actors.Count + 
-                             vocabulary.Directors.Count + 
+            var expectedDim = vocabulary.Genres.Count +
+                             vocabulary.Actors.Count +
+                             vocabulary.Directors.Count +
                              vocabulary.Tags.Count +
                              vocabulary.Decades.Count +
                              2; // ratings
@@ -200,7 +200,7 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Domain
             {
                 ReleaseYear = 2020
             };
-            
+
             var items = new[] { item };
             var vocabulary = _vocabularyBuilder.BuildVocabulary(items);
 
@@ -208,7 +208,7 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Domain
 
             embedding.Should().NotBeNull();
             embedding.Vector.Should().NotBeEmpty();
-            
+
             // Should still be normalized even with sparse features
             var magnitude = VectorMath.Magnitude(embedding.Vector);
             magnitude.Should().BeApproximately(1.0f, 0.001f);
@@ -223,7 +223,7 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Domain
                 CriticRating = 100.0f,     // Max critic rating
                 ReleaseYear = 2020
             };
-            
+
             var items = new[] { item };
             var vocabulary = _vocabularyBuilder.BuildVocabulary(items);
 
@@ -234,7 +234,7 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Domain
             embedding.Vector.Should().NotContain(float.NaN);
             embedding.Vector.Should().NotContain(float.PositiveInfinity);
             embedding.Vector.Should().NotContain(float.NegativeInfinity);
-            
+
             var magnitude = VectorMath.Magnitude(embedding.Vector);
             magnitude.Should().BeApproximately(1.0f, 0.001f);
         }
@@ -247,17 +247,17 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Domain
             {
                 ReleaseYear = 1990
             };
-            
+
             var item1999 = new MediaItemMetadata(Guid.NewGuid(), "Movie 1999", MediaType.Movie)
             {
                 ReleaseYear = 1999
             };
-            
+
             var item2020 = new MediaItemMetadata(Guid.NewGuid(), "Movie 2020", MediaType.Movie)
             {
                 ReleaseYear = 2020
             };
-            
+
             var items = new[] { item1990a, item1999, item2020 };
             var vocabulary = _vocabularyBuilder.BuildVocabulary(items);
 
@@ -269,11 +269,11 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Domain
             VectorMath.Magnitude(embedding1990a.Vector).Should().BeApproximately(1.0f, 0.001f);
             VectorMath.Magnitude(embedding1999.Vector).Should().BeApproximately(1.0f, 0.001f);
             VectorMath.Magnitude(embedding2020.Vector).Should().BeApproximately(1.0f, 0.001f);
-            
+
             // Same decade should have higher similarity
             var sameDecadeSim = VectorMath.CosineSimilarity(embedding1990a.Vector, embedding1999.Vector);
             var diffDecadeSim = VectorMath.CosineSimilarity(embedding1990a.Vector, embedding2020.Vector);
-            
+
             sameDecadeSim.Should().BeGreaterThan(diffDecadeSim,
                 "items from same decade (1990s) should be more similar than items from different decades");
         }
@@ -286,12 +286,12 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Domain
             {
                 ReleaseYear = 1975
             };
-            
+
             var item2020s = new MediaItemMetadata(Guid.NewGuid(), "2020s Movie", MediaType.Movie)
             {
                 ReleaseYear = 2023
             };
-            
+
             var items = new[] { item1970s, item2020s };
             var vocabulary = _vocabularyBuilder.BuildVocabulary(items);
 
@@ -308,10 +308,10 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Domain
         {
             var item1 = new MediaItemMetadata(Guid.NewGuid(), "Movie 1", MediaType.Movie);
             item1.AddGenre("Science Fiction");
-            
+
             var item2 = new MediaItemMetadata(Guid.NewGuid(), "Movie 2", MediaType.Movie);
             item2.AddGenre("science fiction");  // Different case
-            
+
             var items = new[] { item1, item2 };
             var vocabulary = _vocabularyBuilder.BuildVocabulary(items);
 
@@ -347,7 +347,7 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Domain
         {
             // Create library with many unique actors (each movie has 3 different actors)
             var items = TestMediaLibrary.CreateTestMovies();
-            
+
             // Build vocabulary with actor limit
             var vocabulary = _vocabularyBuilder.BuildVocabulary(items, maxActors: 5);
 
@@ -359,7 +359,7 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Domain
         public void VocabularyBuilder_WithMaxDirectors_LimitsVocabularySize()
         {
             var items = TestMediaLibrary.CreateTestMovies();
-            
+
             var vocabulary = _vocabularyBuilder.BuildVocabulary(items, maxDirectors: 3);
 
             vocabulary.Directors.Count.Should().Be(3, "maxDirectors parameter should limit vocabulary size");
@@ -369,7 +369,7 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Domain
         public void VocabularyBuilder_WithoutLimits_IncludesAllFeatures()
         {
             var items = TestMediaLibrary.CreateTestMovies();
-            
+
             // No limits (defaults to 0 = unlimited)
             var vocabulary = _vocabularyBuilder.BuildVocabulary(items);
 

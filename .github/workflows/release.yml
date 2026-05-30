@@ -1,0 +1,147 @@
+name: Build and Release
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 9.0.x
+
+      - name: Restore dependencies
+        run: dotnet restore Jellyfin.Plugin.LocalRecs.sln
+
+      - name: Check formatting
+        run: dotnet format Jellyfin.Plugin.LocalRecs.sln --verify-no-changes
+
+      - name: Build (strict)
+        run: dotnet build Jellyfin.Plugin.LocalRecs.sln --configuration Release --no-restore /p:TreatWarningsAsErrors=true
+
+      - name: Run unit tests
+        run: dotnet test Jellyfin.Plugin.LocalRecs.Tests/Jellyfin.Plugin.LocalRecs.Tests.csproj --configuration Release --no-build
+
+  release:
+    runs-on: ubuntu-latest
+    needs: validate
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Get next version
+        id: get_version
+        run: |
+          LATEST=$(git tag --sort=-v:refname | head -1 | sed 's/^v//')
+          if [ -z "$LATEST" ]; then
+            LATEST="0.0.0.0"
+          fi
+          NEXT=$(echo "$LATEST" | awk -F. '{$NF=$NF+1; print}' OFS=.)
+          echo "VERSION=$NEXT" >> $GITHUB_OUTPUT
+          echo "TAG=v$NEXT" >> $GITHUB_OUTPUT
+          echo "Next version: $NEXT (tag: v$NEXT)"
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 9.0.x
+
+      - name: Restore dependencies
+        run: dotnet restore Jellyfin.Plugin.LocalRecs/Jellyfin.Plugin.LocalRecs.csproj
+
+      - name: Build release
+        run: |
+          VERSION=${{ steps.get_version.outputs.VERSION }}
+          dotnet build Jellyfin.Plugin.LocalRecs/Jellyfin.Plugin.LocalRecs.csproj --configuration Release --no-restore \
+            /p:TreatWarningsAsErrors=true \
+            /p:Version=$VERSION \
+            /p:AssemblyVersion=$VERSION \
+            /p:FileVersion=$VERSION
+
+      - name: Create release zip
+        run: |
+          VERSION=${{ steps.get_version.outputs.VERSION }}
+          mkdir -p release
+          find Jellyfin.Plugin.LocalRecs -path "*/bin/Release/net9.0/*.dll" -exec cp {} release/ \;
+          cd release
+          zip -r ../jellyfin-plugin-localrecs-v${VERSION}.zip .
+
+      - name: Calculate checksum
+        id: calculate_checksum
+        run: |
+          VERSION=${{ steps.get_version.outputs.VERSION }}
+          CHECKSUM=$(md5sum jellyfin-plugin-localrecs-v${VERSION}.zip | awk '{ print $1 }')
+          echo "CHECKSUM=$CHECKSUM" >> $GITHUB_OUTPUT
+
+      - name: Generate manifest.json
+        run: |
+          VERSION=${{ steps.get_version.outputs.VERSION }}
+          TAG=${{ steps.get_version.outputs.TAG }}
+          CHECKSUM=${{ steps.calculate_checksum.outputs.CHECKSUM }}
+          TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          cat > manifest.json << EOF
+          [
+            {
+              "guid": "2d2a8fdf-0593-4258-a83c-31c4b14e0110",
+              "name": "Local Recommendations",
+              "overview": "Privacy-first personalized recommendations based on local watch history",
+              "description": "Generate per-user content recommendations using TF-IDF embeddings and cosine similarity. All processing happens locally with zero tracking or cloud dependencies. Recommendations appear as virtual libraries accessible from all Jellyfin clients.",
+              "owner": "ChristianTrab",
+              "category": "General",
+              "versions": [
+                {
+                  "version": "${VERSION}",
+                  "changelog": "See the full changelog at [GitHub](https://github.com/ChristianTrab/jellyfin-plugin-localrecs/releases/tag/${TAG})",
+                  "targetAbi": "10.11.0.0",
+                  "sourceUrl": "https://github.com/ChristianTrab/jellyfin-plugin-localrecs/releases/download/${TAG}/jellyfin-plugin-localrecs-v${VERSION}.zip",
+                  "checksum": "${CHECKSUM}",
+                  "timestamp": "${TIMESTAMP}"
+                }
+              ]
+            }
+          ]
+          EOF
+
+      - name: Create tag and GitHub Release
+        run: |
+          TAG=${{ steps.get_version.outputs.TAG }}
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag "$TAG"
+          git push origin "$TAG"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload Release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ steps.get_version.outputs.TAG }}
+          files: |
+            jellyfin-plugin-localrecs-v${{ steps.get_version.outputs.VERSION }}.zip
+            manifest.json
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Update manifest on main
+        run: |
+          git fetch origin main
+          git checkout main
+          git add manifest.json
+          git commit -m "chore: update manifest for ${{ steps.get_version.outputs.TAG }}" || true
+          git push origin main
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
