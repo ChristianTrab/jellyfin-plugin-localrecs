@@ -3,6 +3,7 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text;
 using Jellyfin.Plugin.LocalRecs.Models;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Entities.TV;
@@ -221,6 +222,71 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
                 && VideoExtensions.Contains(extension, StringComparer.OrdinalIgnoreCase);
         }
 
+        private static bool IsSeasonOrSpecialsFolder(string dirName)
+        {
+            if (dirName.Equals("Specials", StringComparison.OrdinalIgnoreCase)
+                || dirName.Equals("Extras", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            if (dirName.StartsWith("Season ", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            if (dirName.Length >= 2
+                && (dirName[0] == 'S' || dirName[0] == 's')
+                && dirName[1..].All(char.IsDigit))
+            {
+                return true;
+            }
+
+            return false;
+        }
+
+        private static void AppendProviderIds(StringBuilder sb, BaseItem item)
+        {
+            var tmdb = item.GetProviderId(MetadataProvider.Tmdb);
+            var tvdb = item.GetProviderId(MetadataProvider.Tvdb);
+            var imdb = item.GetProviderId(MetadataProvider.Imdb);
+
+            if (!string.IsNullOrEmpty(tvdb))
+            {
+                sb.Append("  <tvdbid>").Append(XmlEscape(tvdb)).AppendLine("</tvdbid>");
+                sb.Append("  <uniqueid default=\"true\" type=\"tvdb\">").Append(XmlEscape(tvdb)).AppendLine("</uniqueid>");
+            }
+
+            if (!string.IsNullOrEmpty(tmdb))
+            {
+                sb.Append("  <tmdbid>").Append(XmlEscape(tmdb)).AppendLine("</tmdbid>");
+                if (string.IsNullOrEmpty(tvdb))
+                {
+                    sb.Append("  <uniqueid default=\"true\" type=\"tmdb\">").Append(XmlEscape(tmdb)).AppendLine("</uniqueid>");
+                }
+                else
+                {
+                    sb.Append("  <uniqueid type=\"tmdb\">").Append(XmlEscape(tmdb)).AppendLine("</uniqueid>");
+                }
+            }
+
+            if (!string.IsNullOrEmpty(imdb))
+            {
+                sb.Append("  <imdbid>").Append(XmlEscape(imdb)).AppendLine("</imdbid>");
+                if (string.IsNullOrEmpty(tvdb) && string.IsNullOrEmpty(tmdb))
+                {
+                    sb.Append("  <uniqueid default=\"true\" type=\"imdb\">").Append(XmlEscape(imdb)).AppendLine("</uniqueid>");
+                }
+                else
+                {
+                    sb.Append("  <uniqueid type=\"imdb\">").Append(XmlEscape(imdb)).AppendLine("</uniqueid>");
+                }
+            }
+        }
+
+        private static string XmlEscape(string value)
+            => value.Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;").Replace("\"", "&quot;").Replace("'", "&apos;");
+
         private int SyncRecommendationsInternal(
             Guid userId,
             IReadOnlyList<ScoredRecommendation> recommendations,
@@ -345,6 +411,7 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
         private void CreateMovieFolderStructureWithFileSymlinks(string linkPath, string folderName, BaseItem item)
         {
             Directory.CreateDirectory(linkPath);
+            WriteMovieNfo(linkPath, item);
 
             var extension = Path.GetExtension(item.Path);
             var mediaLinkPath = Path.Combine(linkPath, folderName + extension);
@@ -364,7 +431,7 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
         private void CreateSeriesStructure(string libraryPath, Series series)
         {
             var seriesFolderName = GenerateFolderName(series);
-            var linkPath = Path.Combine(libraryPath, seriesFolderName);
+            var seriesPath = Path.Combine(libraryPath, seriesFolderName);
             var seriesSourceDir = series.Path;
 
             if (string.IsNullOrEmpty(seriesSourceDir) || !Directory.Exists(seriesSourceDir))
@@ -376,11 +443,72 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
                 return;
             }
 
-            CreateDirectorySymlink(linkPath, seriesSourceDir);
+            var seasonLinks = TryCreateSeriesWrapperWithMetadata(seriesPath, series, seriesSourceDir);
+            if (seasonLinks >= 0)
+            {
+                _logger.LogDebug(
+                    "Created series wrapper {FolderName} with tvshow.nfo and {SeasonCount} season folder symlink(s)",
+                    seriesFolderName,
+                    seasonLinks);
+                return;
+            }
+
+            CreateDirectorySymlink(seriesPath, seriesSourceDir);
             _logger.LogDebug(
-                "Created series directory symlink: {FolderName} -> {SourceDir}",
+                "Created series directory symlink (no season subfolders detected): {FolderName} -> {SourceDir}",
                 seriesFolderName,
                 seriesSourceDir);
+        }
+
+        /// <summary>
+        /// Creates a real series folder with tvshow.nfo and directory symlinks for each season.
+        /// Returns the number of season symlinks, or -1 when the layout is not season-based.
+        /// </summary>
+        private int TryCreateSeriesWrapperWithMetadata(string seriesPath, Series series, string seriesSourceDir)
+        {
+            Directory.CreateDirectory(seriesPath);
+            WriteTvShowNfo(seriesPath, series);
+
+            var seasonLinks = 0;
+            foreach (var sourceSubDir in Directory.EnumerateDirectories(seriesSourceDir))
+            {
+                var dirName = Path.GetFileName(sourceSubDir);
+                if (!IsSeasonOrSpecialsFolder(dirName))
+                {
+                    continue;
+                }
+
+                var seasonLinkPath = Path.Combine(seriesPath, dirName);
+                try
+                {
+                    CreateDirectorySymlink(seasonLinkPath, sourceSubDir);
+                    seasonLinks++;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to symlink season folder {SeasonDir} for {SeriesName}", dirName, series.Name);
+                }
+            }
+
+            if (seasonLinks == 0)
+            {
+                try
+                {
+                    if (Directory.Exists(seriesPath))
+                    {
+                        Directory.Delete(seriesPath, recursive: true);
+                    }
+                }
+                catch (IOException ex)
+                {
+                    _logger.LogWarning(ex, "Failed to remove empty series wrapper at {Path}", seriesPath);
+                }
+
+                return -1;
+            }
+
+            LinkItemArtwork(seriesPath, series);
+            return seasonLinks;
         }
 
         /// <summary>
@@ -555,6 +683,62 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
             }
 
             return count;
+        }
+
+        /// <summary>
+        /// Writes tvshow.nfo with provider IDs so Jellyfin identifies the series before remote lookups.
+        /// </summary>
+        private void WriteTvShowNfo(string seriesPath, Series series)
+        {
+            var nfoPath = Path.Combine(seriesPath, "tvshow.nfo");
+            var sb = new StringBuilder();
+            sb.AppendLine("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>");
+            sb.AppendLine("<tvshow>");
+            sb.Append("  <title>").Append(XmlEscape(series.Name ?? "Unknown")).AppendLine("</title>");
+            if (series.ProductionYear.HasValue)
+            {
+                sb.Append("  <year>").Append(series.ProductionYear.Value).AppendLine("</year>");
+            }
+
+            AppendProviderIds(sb, series);
+            sb.AppendLine("</tvshow>");
+
+            try
+            {
+                File.WriteAllText(nfoPath, sb.ToString(), new UTF8Encoding(false));
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to write tvshow.nfo for {SeriesName}", series.Name);
+            }
+        }
+
+        /// <summary>
+        /// Writes movie.nfo with provider IDs for file-level symlink layouts.
+        /// </summary>
+        private void WriteMovieNfo(string moviePath, BaseItem item)
+        {
+            var nfoPath = Path.Combine(moviePath, "movie.nfo");
+            var sb = new StringBuilder();
+            sb.AppendLine("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>");
+            sb.AppendLine("<movie>");
+            sb.Append("  <title>").Append(XmlEscape(item.Name ?? "Unknown")).AppendLine("</title>");
+            if (item.ProductionYear.HasValue)
+            {
+                sb.Append("  <year>").Append(item.ProductionYear.Value).AppendLine("</year>");
+            }
+
+            AppendProviderIds(sb, item);
+            sb.AppendLine("</movie>");
+
+            try
+            {
+                File.WriteAllText(nfoPath, sb.ToString(), new UTF8Encoding(false));
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to write movie.nfo for {ItemName}", item.Name);
+            }
         }
 
         private bool TryCreateSymlink(string linkPath, string targetPath)

@@ -270,14 +270,50 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Unit.VirtualLibrary
             seriesFolders.Should().HaveCount(1);
 
             var seriesFolder = seriesFolders[0];
-            VirtualLibraryPaths.IsSymbolicLink(seriesFolder).Should().BeTrue();
+            VirtualLibraryPaths.IsSymbolicLink(seriesFolder).Should().BeFalse();
             File.Exists(Path.Combine(seriesFolder, "tvshow.nfo")).Should().BeTrue();
             var nfo = File.ReadAllText(Path.Combine(seriesFolder, "tvshow.nfo"));
             nfo.Should().Contain("<tmdbid>12345</tmdbid>");
 
             var seasonFolder = Path.Combine(seriesFolder, "Season 01");
-            Directory.Exists(seasonFolder).Should().BeTrue();
+            VirtualLibraryPaths.IsSymbolicLink(seasonFolder).Should().BeTrue();
             Directory.GetFiles(seasonFolder, "*.mkv").Should().HaveCount(1);
+        }
+
+        [SkippableFact]
+        public void SyncRecommendations_CreatesSeriesWrapperForShortSeasonFolderNames()
+        {
+            Skip.IfNot(CanCreateSymlinks());
+
+            var userId = Guid.NewGuid();
+            _manager.EnsureUserDirectoriesExist(userId, "TestUser");
+
+            var seriesSourceDir = Path.Combine(_testBasePath, "source", "Gotham");
+            var seasonDir = Path.Combine(seriesSourceDir, "S01");
+            Directory.CreateDirectory(seasonDir);
+            File.WriteAllText(Path.Combine(seasonDir, "Gotham.S01E01.mkv"), "episode");
+
+            var seriesId = Guid.NewGuid();
+            var series = new Series
+            {
+                Id = seriesId,
+                Name = "Gotham",
+                Path = seriesSourceDir,
+                ProductionYear = 2014,
+                ProviderIds = new Dictionary<string, string> { { "Tvdb", "274778" } }
+            };
+
+            _mockLibraryManager.Setup(m => m.GetItemById(seriesId)).Returns(series);
+
+            _manager.SyncRecommendations(
+                userId,
+                new[] { new ScoredRecommendation(seriesId, 0.88f) },
+                MediaType.Series);
+
+            var seriesFolder = Directory.GetDirectories(_manager.GetUserLibraryPath(userId, MediaType.Series)).Single();
+            VirtualLibraryPaths.IsSymbolicLink(seriesFolder).Should().BeFalse();
+            File.ReadAllText(Path.Combine(seriesFolder, "tvshow.nfo")).Should().Contain("<tvdbid>274778</tvdbid>");
+            VirtualLibraryPaths.IsSymbolicLink(Path.Combine(seriesFolder, "S01")).Should().BeTrue();
         }
 
         [Fact]
