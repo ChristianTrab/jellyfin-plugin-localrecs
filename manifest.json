@@ -8,12 +8,12 @@
     "category": "General",
     "versions": [
       {
-        "version": "0.7.0.3",
-        "changelog": "See the full changelog at [GitHub](https://github.com/ChristianTrab/jellyfin-plugin-localrecs/releases/tag/v0.7.0.3)",
+        "version": "0.7.0.4",
+        "changelog": "See the full changelog at [GitHub](https://github.com/ChristianTrab/jellyfin-plugin-localrecs/releases/tag/v0.7.0.4)",
         "targetAbi": "10.11.0.0",
-        "sourceUrl": "https://github.com/ChristianTrab/jellyfin-plugin-localrecs/releases/download/v0.7.0.3/jellyfin-plugin-localrecs-v0.7.0.3.zip",
-        "checksum": "d96e8738da6a771fc5dbfbe21b172282",
-        "timestamp": "2026-05-30T18:40:38Z"
+        "sourceUrl": "https://github.com/ChristianTrab/jellyfin-plugin-localrecs/releases/download/v0.7.0.4/jellyfin-plugin-localrecs-v0.7.0.4.zip",
+        "checksum": "b50c673c807ebff49ba6162ed2907e97",
+        "timestamp": "2026-05-30T19:45:01Z"
       }
     ]
   }
