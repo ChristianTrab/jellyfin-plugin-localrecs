@@ -4,88 +4,16 @@
     "name": "Local Recommendations",
     "overview": "Privacy-first personalized recommendations based on local watch history",
     "description": "Generate per-user content recommendations using TF-IDF embeddings and cosine similarity. All processing happens locally with zero tracking or cloud dependencies. Recommendations appear as virtual libraries accessible from all Jellyfin clients.",
-    "owner": "rdpharr",
+    "owner": "ChristianTrab",
     "category": "General",
     "versions": [
       {
-        "version": "0.6.0.0",
-        "changelog": "Migrate from .strm files to filesystem symlinks (#13)\n- Fixes transcoded playback on Jellyfin 10.11.7+ (GHSA-j2hf-x4q5-47j3)\n- Symlinks preserve source extensions; media pipeline treats them as regular files\n- Artwork symlinked from source folder (propagates custom posters automatically)\n- Trailer discovery delegated to Jellyfin's native scanner\n- Removed ImageSyncService and EnableImageSync/SyncBackdrops settings\n- WINDOWS: requires Administrator or Developer Mode enabled for symlink creation",
+        "version": "0.6.0.1",
+        "changelog": "See the full changelog at [GitHub](https://github.com/ChristianTrab/jellyfin-plugin-localrecs/releases/tag/v0.6.0.1)",
         "targetAbi": "10.11.0.0",
-        "sourceUrl": "https://github.com/rdpharr/jellyfin-plugin-localrecs/releases/download/v0.6.0/jellyfin-plugin-localrecs-v0.6.0.zip",
-        "checksum": "7047f5ca403fe0d17ae5fd01e7af50ac",
-        "timestamp": "2026-04-15T00:00:00Z"
-      },
-      {
-        "version": "0.5.3.0",
-        "changelog": "Filter recommendations by user library access (#10)\n- Items from libraries a user cannot access are excluded from recommendations\n- Applies to both personalized and cold-start recommendation paths\n- Respects per-user library permissions including disabled libraries",
-        "targetAbi": "10.11.0.0",
-        "sourceUrl": "https://github.com/rdpharr/jellyfin-plugin-localrecs/releases/download/v0.5.3/jellyfin-plugin-localrecs-v0.5.3.zip",
-        "checksum": "970ba6e9e74b0c8c92da9d18e296b602",
-        "timestamp": "2026-03-23T00:00:00Z"
-      },
-      {
-        "version": "0.5.2.0",
-        "changelog": "Fix playback freeze when playing from recommendation libraries (#8)\n- Never remove virtual library items from event handlers (deferred to next refresh)\n- Ignore PlaybackStart/PlaybackProgress events to prevent DB write storms during playback\n- Only sync play status on meaningful events (PlaybackFinished, TogglePlayed, etc.)\n- Known tradeoff: partially watched items may appear in Continue Watching twice until next refresh",
-        "targetAbi": "10.11.0.0",
-        "sourceUrl": "https://github.com/rdpharr/jellyfin-plugin-localrecs/releases/download/v0.5.2/jellyfin-plugin-localrecs-v0.5.2.zip",
-        "checksum": "b99cd687dc2d9efd0ab92f100b3d34c9",
-        "timestamp": "2026-02-08T00:00:00Z"
-      },
-      {
-        "version": "0.5.1.0",
-        "changelog": "Bug fixes for series recommendations and playback crashes\n- Fixed: Partially watched series not included in watch history, causing all users to get identical cold-start recommendations (#7)\n- Fixed: Playback from recommendation libraries crashing with database failures (#8)\n- Series watch history now detected at episode level instead of requiring all episodes watched\n- Virtual library items no longer removed during active playback",
-        "targetAbi": "10.11.0.0",
-        "sourceUrl": "https://github.com/rdpharr/jellyfin-plugin-localrecs/releases/download/v0.5.1/jellyfin-plugin-localrecs-v0.5.1.zip",
-        "checksum": "f374c0f8f6df4beaaba682d7fe42a87a",
-        "timestamp": "2026-02-06T00:00:00Z"
-      },
-      {
-        "version": "0.5.0.0",
-        "changelog": "Image sync for custom posters and backdrops\n- Custom poster images are now preserved in recommendation libraries\n- Copies poster.jpg and backdrop.jpg from source items to virtual folders\n- Configurable: Enable/disable image sync and backdrop copying\n- Fixes issue where user customizations (e.g., French posters) were lost",
-        "targetAbi": "10.11.0.0",
-        "sourceUrl": "https://github.com/rdpharr/jellyfin-plugin-localrecs/releases/download/v0.5.0/jellyfin-plugin-localrecs-v0.5.0.zip",
-        "checksum": "139099920d5c8b5722298374775d38fd",
-        "timestamp": "2026-01-28T00:00:00Z"
-      },
-      {
-        "version": "0.4.0.0",
-        "changelog": "Decade-based temporal similarity and bug fix\n- Recommendations now consider content from similar time periods\n- Decade grouping (1980s, 1990s, etc.) replaces continuous year normalization\n- Improves temporal relevance alongside genre/actor/director similarity\n- Tested with production data: ~12 decades extracted from 970 items\n- Observable impact: 24% of movie recommendations changed, 8% of TV\n- Fixed: In-progress TV series no longer appear in recommendations",
-        "targetAbi": "10.11.0.0",
-        "sourceUrl": "https://github.com/rdpharr/jellyfin-plugin-localrecs/releases/download/v0.4.0/jellyfin-plugin-localrecs-v0.4.0.zip",
-        "checksum": "c5435ad1db7edd264ad383a9dac7b947",
-        "timestamp": "2025-12-28T00:00:00Z"
-      },
-      {
-        "version": "0.3.0.0",
-        "changelog": "Series filtering fix and play status sync\n- Fixed fully watched series appearing in recommendations\n- Play status sync from source library when virtual items are scanned\n- Rating proximity scoring feature\n- Removed NFO file generation (Jellyfin doesn't read NFO for .strm files)\n- Reduced debug logging noise",
-        "targetAbi": "10.11.0.0",
-        "sourceUrl": "https://github.com/rdpharr/jellyfin-plugin-localrecs/releases/download/v0.3.0/jellyfin-plugin-localrecs-v0.3.0.zip",
-        "checksum": "05de481e13cad831efeee081d1e19d19",
-        "timestamp": "2025-12-27T00:00:00Z"
-      },
-      {
-        "version": "0.2.1.0",
-        "changelog": "Fix NFO metadata parsing\n- Fixed XML encoding (UTF-16 to UTF-8) so Jellyfin reads runtime correctly\n- Added cast, directors, and writers to NFO files\n- Added fileinfo/streamdetails for video/audio/subtitle stream selectors",
-        "targetAbi": "10.11.0.0",
-        "sourceUrl": "https://github.com/rdpharr/jellyfin-plugin-localrecs/releases/download/v0.2.1/jellyfin-plugin-localrecs-v0.2.1.zip",
-        "checksum": "f0c7642892ea188e559df11cebc5a781",
-        "timestamp": "2025-12-26T00:00:00Z"
-      },
-      {
-        "version": "0.2.0.0",
-        "changelog": "NFO metadata and trailer support\n- NFO files with full metadata (runtime, ratings, genres, studios, tags)\n- Local trailer support via -trailer.strm files\n- Movie folder structure for better metadata handling\n- Fixed copy buttons on setup page\n- Improved documentation",
-        "targetAbi": "10.11.0.0",
-        "sourceUrl": "https://github.com/rdpharr/jellyfin-plugin-localrecs/releases/download/v0.2.0/jellyfin-plugin-localrecs-v0.2.0.zip",
-        "checksum": "b72a293846bbbd1a9f1fd1f5b843d10d",
-        "timestamp": "2025-12-26T00:00:00Z"
-      },
-      {
-        "version": "0.1.0.0",
-        "changelog": "Initial beta release\n- Per-user personalized recommendations for movies and TV shows\n- Content-based filtering using TF-IDF embeddings\n- Virtual library integration for universal client compatibility\n- Configurable weighting (favorites, rewatches, recency)\n- Abandoned series exclusion\n- Daily scheduled updates with manual refresh option\n- Complete privacy - all processing local",
-        "targetAbi": "10.11.0.0",
-        "sourceUrl": "https://github.com/rdpharr/jellyfin-plugin-localrecs/releases/download/v0.1.0/jellyfin-plugin-localrecs-v0.1.0.zip",
-        "checksum": "cbb549b3b7c639ddf9866002e10d5a4f",
-        "timestamp": "2025-12-26T00:00:00Z"
+        "sourceUrl": "https://github.com/ChristianTrab/jellyfin-plugin-localrecs/releases/download/v0.6.0.1/jellyfin-plugin-localrecs-v0.6.0.1.zip",
+        "checksum": "75ba0f2f970a8261c4697ad5e0163074",
+        "timestamp": "2026-05-30T12:13:20Z"
       }
     ]
   }
