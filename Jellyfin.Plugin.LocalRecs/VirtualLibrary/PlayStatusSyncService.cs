@@ -183,15 +183,15 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
                     return;
                 }
 
-                // Iterate symlink files under the user's virtual library
-                var linkPaths = Directory.EnumerateFiles(userVirtualLibraryPath, "*", SearchOption.AllDirectories)
-                    .Where(VirtualLibraryPaths.IsSymbolicLink);
+                // Walk media files under the user's virtual library (folder symlinks expose real files)
+                var linkPaths = Directory.EnumerateFiles(userVirtualLibraryPath, "*.*", SearchOption.AllDirectories)
+                    .Where(IsMediaFile);
 
                 foreach (var linkPath in linkPaths)
                 {
                     try
                     {
-                        var sourcePath = ResolveSymlinkTarget(linkPath);
+                        var sourcePath = VirtualLibraryPaths.ResolvePhysicalPath(linkPath);
                         if (string.IsNullOrEmpty(sourcePath))
                         {
                             continue;
@@ -258,22 +258,18 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
             _logger.LogInformation("Completed play status sync from source library for all users");
         }
 
-        /// <summary>
-        /// Resolves the final target of a symbolic link. Returns null if the path is not a symlink
-        /// or cannot be resolved.
-        /// </summary>
-        private static string? ResolveSymlinkTarget(string linkPath)
+        private static bool IsMediaFile(string path)
         {
-            try
-            {
-                var info = new FileInfo(linkPath);
-                var target = info.ResolveLinkTarget(returnFinalTarget: true);
-                return target?.FullName;
-            }
-            catch (Exception)
-            {
-                return null;
-            }
+            var extension = Path.GetExtension(path);
+            return extension.Equals(".mkv", StringComparison.OrdinalIgnoreCase)
+                || extension.Equals(".mp4", StringComparison.OrdinalIgnoreCase)
+                || extension.Equals(".avi", StringComparison.OrdinalIgnoreCase)
+                || extension.Equals(".mov", StringComparison.OrdinalIgnoreCase)
+                || extension.Equals(".wmv", StringComparison.OrdinalIgnoreCase)
+                || extension.Equals(".m4v", StringComparison.OrdinalIgnoreCase)
+                || extension.Equals(".webm", StringComparison.OrdinalIgnoreCase)
+                || extension.Equals(".ts", StringComparison.OrdinalIgnoreCase)
+                || extension.Equals(".m2ts", StringComparison.OrdinalIgnoreCase);
         }
 
         /// <summary>
@@ -439,7 +435,7 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
                     return;
                 }
 
-                var sourcePath = ResolveSymlinkTarget(virtualItem.Path);
+                var sourcePath = VirtualLibraryPaths.ResolvePhysicalPath(virtualItem.Path);
                 if (string.IsNullOrEmpty(sourcePath))
                 {
                     return;
@@ -590,10 +586,10 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
         {
             try
             {
-                var sourcePath = ResolveSymlinkTarget(virtualItem.Path);
+                var sourcePath = VirtualLibraryPaths.ResolvePhysicalPath(virtualItem.Path);
                 if (string.IsNullOrEmpty(sourcePath))
                 {
-                    _logger.LogWarning("Could not resolve symlink target: {Path}", virtualItem.Path);
+                    _logger.LogWarning("Could not resolve physical path for virtual item: {Path}", virtualItem.Path);
                     return;
                 }
 

@@ -56,27 +56,27 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Unit.VirtualLibrary
         }
 
         [SkippableFact]
-        public void SyncPlayStatusFromSourceLibrary_OnlyProcessesSymlinks()
+        public void SyncPlayStatusFromSourceLibrary_SyncsMediaInsideFolderSymlinks()
         {
             Skip.IfNot(VirtualLibraryManagerTestsHelper.CanCreateSymlinks());
 
-            var sourceFile = Path.Combine(_basePath, "source.mkv");
+            var sourceDir = Path.Combine(_basePath, "source", "Movie (2020)");
+            Directory.CreateDirectory(sourceDir);
+            var sourceFile = Path.Combine(sourceDir, "Movie.mkv");
             File.WriteAllText(sourceFile, "content");
 
-            var userDir = Path.Combine(_basePath, _userId.ToString(), "movies", "Movie (2020)");
-            Directory.CreateDirectory(userDir);
+            var moviesPath = Path.Combine(_basePath, _userId.ToString(), "movies");
+            Directory.CreateDirectory(moviesPath);
+            var virtualFolder = Path.Combine(moviesPath, "Movie (2020) [tmdbid-1]");
+            Directory.CreateSymbolicLink(virtualFolder, sourceDir);
 
-            var linkPath = Path.Combine(userDir, "Movie.mkv");
-            File.CreateSymbolicLink(linkPath, sourceFile);
-
-            var nfoPath = Path.Combine(userDir, "movie.nfo");
-            File.WriteAllText(nfoPath, "<movie/>");
+            var virtualFilePath = Path.Combine(virtualFolder, "Movie.mkv");
 
             var sourceItem = new Movie { Id = Guid.NewGuid(), Name = "Source", Path = sourceFile };
-            var virtualItem = new Movie { Id = Guid.NewGuid(), Name = "Virtual", Path = linkPath };
+            var virtualItem = new Movie { Id = Guid.NewGuid(), Name = "Virtual", Path = virtualFilePath };
 
             _mockLibraryManager.Setup(m => m.FindByPath(sourceFile, false)).Returns(sourceItem);
-            _mockLibraryManager.Setup(m => m.FindByPath(linkPath, false)).Returns(virtualItem);
+            _mockLibraryManager.Setup(m => m.FindByPath(virtualFilePath, false)).Returns(virtualItem);
 
             var sourceData = new UserItemData { Key = sourceItem.Id.ToString(), Played = true, PlayCount = 1 };
             var virtualData = new UserItemData { Key = virtualItem.Id.ToString(), Played = false, PlayCount = 0 };

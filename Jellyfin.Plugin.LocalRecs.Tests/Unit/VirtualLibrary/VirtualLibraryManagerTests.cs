@@ -5,15 +5,12 @@ using System.Linq;
 using FluentAssertions;
 using Jellyfin.Plugin.LocalRecs.Models;
 using Jellyfin.Plugin.LocalRecs.VirtualLibrary;
-using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Entities.Movies;
 using MediaBrowser.Controller.Entities.TV;
 using MediaBrowser.Controller.Library;
-using MediaBrowser.Model.Entities;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using Xunit;
-using BaseItemKind = Jellyfin.Data.Enums.BaseItemKind;
 
 namespace Jellyfin.Plugin.LocalRecs.Tests.Unit.VirtualLibrary
 {
@@ -120,13 +117,12 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Unit.VirtualLibrary
             var movieFolders = Directory.GetDirectories(moviePath);
             movieFolders.Should().HaveCount(1);
 
-            var mediaLinks = Directory.GetFiles(movieFolders[0], "*.mkv");
-            mediaLinks.Should().HaveCount(1);
+            VirtualLibraryPaths.IsSymbolicLink(movieFolders[0]).Should().BeTrue();
+            var target = new DirectoryInfo(movieFolders[0]).ResolveLinkTarget(returnFinalTarget: true);
+            target!.FullName.Should().Be(new DirectoryInfo(_sourceMediaDir).FullName);
 
-            var info = new FileInfo(mediaLinks[0]);
-            info.LinkTarget.Should().NotBeNull();
-            var target = info.ResolveLinkTarget(returnFinalTarget: true);
-            target!.FullName.Should().Be(new FileInfo(_sourceMediaFile).FullName);
+            Directory.GetFiles(movieFolders[0], "*.mkv").Should().HaveCount(1);
+            VirtualLibraryPaths.IsSymbolicLink(Path.Combine(movieFolders[0], "TestMovie.mkv")).Should().BeFalse();
         }
 
         [SkippableFact]
@@ -158,6 +154,7 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Unit.VirtualLibrary
 
             var moviePath = _manager.GetUserLibraryPath(userId, MediaType.Movie);
             var folder = Directory.GetDirectories(moviePath).Single();
+            VirtualLibraryPaths.IsSymbolicLink(folder).Should().BeTrue();
             Directory.GetFiles(folder, "*.mp4").Should().HaveCount(1);
             Directory.GetFiles(folder, "*.strm").Should().BeEmpty();
         }
@@ -181,12 +178,7 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Unit.VirtualLibrary
                 Id = movieId,
                 Name = "Art Movie",
                 Path = _sourceMediaFile,
-                ProductionYear = 2023,
-                ImageInfos = new[]
-                {
-                    new ItemImageInfo { Path = posterPath, Type = ImageType.Primary },
-                    new ItemImageInfo { Path = fanartPath, Type = ImageType.Backdrop },
-                }
+                ProductionYear = 2023
             };
 
             _mockLibraryManager.Setup(m => m.GetItemById(movieId)).Returns(mockMovie);
@@ -199,7 +191,6 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Unit.VirtualLibrary
             var folder = Directory.GetDirectories(_manager.GetUserLibraryPath(userId, MediaType.Movie)).Single();
             File.Exists(Path.Combine(folder, "poster.jpg")).Should().BeTrue();
             File.Exists(Path.Combine(folder, "fanart.jpg")).Should().BeTrue();
-            new FileInfo(Path.Combine(folder, "poster.jpg")).LinkTarget.Should().NotBeNull();
         }
 
         [SkippableFact]
@@ -250,36 +241,24 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Unit.VirtualLibrary
             var userId = Guid.NewGuid();
             _manager.EnsureUserDirectoriesExist(userId, "TestUser");
 
-            var seriesId = Guid.NewGuid();
-            var episodeId = Guid.NewGuid();
-            var episodePath = Path.Combine(_sourceMediaDir, "episode.mkv");
+            var seriesSourceDir = Path.Combine(_testBasePath, "source", "TestSeries");
+            var seasonDir = Path.Combine(seriesSourceDir, "Season 01");
+            Directory.CreateDirectory(seasonDir);
+            var episodePath = Path.Combine(seasonDir, "episode.mkv");
             File.WriteAllText(episodePath, "episode");
+            File.WriteAllText(Path.Combine(seriesSourceDir, "tvshow.nfo"), "<tvshow><tmdbid>12345</tmdbid></tvshow>");
 
+            var seriesId = Guid.NewGuid();
             var series = new Series
             {
                 Id = seriesId,
                 Name = "Test Series",
-                Path = _sourceMediaDir,
+                Path = seriesSourceDir,
                 ProductionYear = 2022,
                 ProviderIds = new Dictionary<string, string> { { "Tmdb", "12345" } }
             };
 
-            var episode = new Episode
-            {
-                Id = episodeId,
-                Name = "Pilot",
-                Path = episodePath,
-                SeriesName = "Test Series",
-                ParentIndexNumber = 1,
-                IndexNumber = 1
-            };
-
             _mockLibraryManager.Setup(m => m.GetItemById(seriesId)).Returns(series);
-            _mockLibraryManager.Setup(m => m.GetItemList(It.Is<InternalItemsQuery>(q =>
-                q.ParentId == seriesId &&
-                q.IncludeItemTypes != null &&
-                q.IncludeItemTypes.Contains(BaseItemKind.Episode))))
-                .Returns(new List<BaseItem> { episode });
 
             _manager.SyncRecommendations(
                 userId,
@@ -291,6 +270,7 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Unit.VirtualLibrary
             seriesFolders.Should().HaveCount(1);
 
             var seriesFolder = seriesFolders[0];
+            VirtualLibraryPaths.IsSymbolicLink(seriesFolder).Should().BeTrue();
             File.Exists(Path.Combine(seriesFolder, "tvshow.nfo")).Should().BeTrue();
             var nfo = File.ReadAllText(Path.Combine(seriesFolder, "tvshow.nfo"));
             nfo.Should().Contain("<tmdbid>12345</tmdbid>");

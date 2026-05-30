@@ -16,7 +16,7 @@ namespace Jellyfin.Plugin.LocalRecs
         /// <summary>
         /// Plugin build version for diagnostics (matches assembly version in csproj).
         /// </summary>
-        public const string BuildVersion = "0.6.0.0";
+        public const string BuildVersion = "0.6.1.0";
 
         private static readonly Guid _id = new Guid("2d2a8fdf-0593-4258-a83c-31c4b14e0110");
 

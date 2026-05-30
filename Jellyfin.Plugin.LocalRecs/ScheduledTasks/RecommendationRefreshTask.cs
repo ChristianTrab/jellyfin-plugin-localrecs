@@ -25,6 +25,7 @@ namespace Jellyfin.Plugin.LocalRecs.ScheduledTasks
         private readonly RecommendationRefreshService _refreshService;
         private readonly VirtualLibraryManager _virtualLibraryManager;
         private readonly ILibraryMonitor _libraryMonitor;
+        private readonly ILibraryManager _libraryManager;
 
         /// <summary>
         /// Initializes a new instance of the <see cref="RecommendationRefreshTask"/> class.
@@ -34,18 +35,21 @@ namespace Jellyfin.Plugin.LocalRecs.ScheduledTasks
         /// <param name="refreshService">Recommendation refresh service.</param>
         /// <param name="virtualLibraryManager">Virtual library manager.</param>
         /// <param name="libraryMonitor">Library monitor for notifying Jellyfin of filesystem changes.</param>
+        /// <param name="libraryManager">Library manager for queuing library scans.</param>
         public RecommendationRefreshTask(
             ILogger<RecommendationRefreshTask> logger,
             IUserManager userManager,
             RecommendationRefreshService refreshService,
             VirtualLibraryManager virtualLibraryManager,
-            ILibraryMonitor libraryMonitor)
+            ILibraryMonitor libraryMonitor,
+            ILibraryManager libraryManager)
         {
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _userManager = userManager ?? throw new ArgumentNullException(nameof(userManager));
             _refreshService = refreshService ?? throw new ArgumentNullException(nameof(refreshService));
             _virtualLibraryManager = virtualLibraryManager ?? throw new ArgumentNullException(nameof(virtualLibraryManager));
             _libraryMonitor = libraryMonitor ?? throw new ArgumentNullException(nameof(libraryMonitor));
+            _libraryManager = libraryManager ?? throw new ArgumentNullException(nameof(libraryManager));
         }
 
         /// <inheritdoc />
@@ -115,7 +119,7 @@ namespace Jellyfin.Plugin.LocalRecs.ScheduledTasks
                                 MediaType.Movie);
 
                             var moviePath = _virtualLibraryManager.GetUserLibraryPath(user.Id, MediaType.Movie);
-                            var movieSymlinks = VirtualLibraryManager.CountMediaSymlinks(moviePath);
+                            var movieEntries = VirtualLibraryManager.CountRecommendationEntries(moviePath);
 
                             _virtualLibraryManager.SyncRecommendations(
                                 user.Id,
@@ -123,29 +127,29 @@ namespace Jellyfin.Plugin.LocalRecs.ScheduledTasks
                                 MediaType.Series);
 
                             var tvPath = _virtualLibraryManager.GetUserLibraryPath(user.Id, MediaType.Series);
-                            var tvSymlinks = VirtualLibraryManager.CountMediaSymlinks(tvPath);
+                            var tvEntries = VirtualLibraryManager.CountRecommendationEntries(tvPath);
 
                             successfulUsers++;
                             _logger.LogInformation(
-                                "Updated virtual library symlinks for {UserName}: {MovieCount} movie recs ({MovieSymlinks} symlinks), {TvCount} TV recs ({TvSymlinks} symlinks)",
+                                "Updated virtual library symlinks for {UserName}: {MovieCount} movie recs ({MovieEntries} entries), {TvCount} TV recs ({TvEntries} entries)",
                                 user.Username,
                                 recs.Movies.Count,
-                                movieSymlinks,
+                                movieEntries,
                                 recs.Tv.Count,
-                                tvSymlinks);
+                                tvEntries);
 
-                            if (movieSymlinks == 0 && recs.Movies.Count > 0)
+                            if (movieEntries == 0 && recs.Movies.Count > 0)
                             {
                                 _logger.LogWarning(
-                                    "No movie symlinks created for {UserName} at {Path}. Check Jellyfin logs for symlink errors.",
+                                    "No movie entries created for {UserName} at {Path}. Check Jellyfin logs for symlink errors.",
                                     user.Username,
                                     moviePath);
                             }
 
-                            if (tvSymlinks == 0 && recs.Tv.Count > 0)
+                            if (tvEntries == 0 && recs.Tv.Count > 0)
                             {
                                 _logger.LogWarning(
-                                    "No TV symlinks created for {UserName} at {Path}. Check Jellyfin logs for symlink errors.",
+                                    "No TV entries created for {UserName} at {Path}. Check Jellyfin logs for symlink errors.",
                                     user.Username,
                                     tvPath);
                             }
@@ -169,6 +173,9 @@ namespace Jellyfin.Plugin.LocalRecs.ScheduledTasks
                 NotifyVirtualLibraryPathsChanged(users.Select(u => u.Id));
 
                 await Task.Delay(TimeSpan.FromSeconds(2), cancellationToken).ConfigureAwait(false);
+
+                _libraryManager.QueueLibraryScan();
+                _logger.LogInformation("Queued a full library scan so recommendation libraries pick up new folder symlinks.");
 
                 progress?.Report(95);
 

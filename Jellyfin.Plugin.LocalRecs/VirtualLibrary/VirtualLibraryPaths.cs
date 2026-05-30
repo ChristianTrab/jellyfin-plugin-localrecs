@@ -46,19 +46,54 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
         }
 
         /// <summary>
-        /// Returns true when the file is a symbolic link (reparse point).
+        /// Returns true when the path is a symbolic link (reparse point).
         /// </summary>
-        /// <param name="filePath">Path to the file.</param>
-        /// <returns>True if the file is a symlink.</returns>
-        public static bool IsSymbolicLink(string filePath)
+        /// <param name="path">Path to the file or directory.</param>
+        /// <returns>True if the path is a symlink.</returns>
+        public static bool IsSymbolicLink(string path)
         {
             try
             {
-                return (File.GetAttributes(filePath) & FileAttributes.ReparsePoint) != 0;
+                return (File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0;
             }
             catch (Exception)
             {
                 return false;
+            }
+        }
+
+        /// <summary>
+        /// Resolves a path to its final on-disk location, following file and directory symlinks.
+        /// </summary>
+        /// <param name="path">The path to resolve.</param>
+        /// <returns>The resolved path, or null when resolution fails.</returns>
+        public static string? ResolvePhysicalPath(string path)
+        {
+            if (string.IsNullOrEmpty(path))
+            {
+                return null;
+            }
+
+            try
+            {
+                if (IsSymbolicLink(path))
+                {
+                    if (File.Exists(path))
+                    {
+                        return new FileInfo(path).ResolveLinkTarget(returnFinalTarget: true)?.FullName;
+                    }
+
+                    if (Directory.Exists(path))
+                    {
+                        return new DirectoryInfo(path).ResolveLinkTarget(returnFinalTarget: true)?.FullName;
+                    }
+                }
+
+                return Path.GetFullPath(path);
+            }
+            catch (Exception)
+            {
+                return null;
             }
         }
     }
