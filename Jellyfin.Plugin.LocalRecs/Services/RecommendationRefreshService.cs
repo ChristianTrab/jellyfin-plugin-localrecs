@@ -62,6 +62,7 @@ namespace Jellyfin.Plugin.LocalRecs.Services
             _logger.LogDebug("Computing fresh embeddings for {Count} items", library.Count);
 
             var config = Plugin.Instance?.Configuration ?? new Configuration.PluginConfiguration();
+            config.EnsureValid(_logger);
 
             var vocabulary = _vocabularyBuilder.BuildVocabulary(
                 library,

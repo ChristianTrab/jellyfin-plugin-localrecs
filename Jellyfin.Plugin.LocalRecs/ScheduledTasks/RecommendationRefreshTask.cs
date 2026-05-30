@@ -64,11 +64,12 @@ namespace Jellyfin.Plugin.LocalRecs.ScheduledTasks
             try
             {
                 var config = Plugin.Instance?.Configuration ?? new PluginConfiguration();
+                config.EnsureValid(_logger);
 
                 // Step 1: Get all users (5% progress)
                 progress?.Report(0);
                 cancellationToken.ThrowIfCancellationRequested();
-                var users = _userManager.Users.ToList();
+                var users = _userManager.GetUsers().ToList();
                 _logger.LogInformation("Generating recommendations for {UserCount} users", users.Count);
                 progress?.Report(5);
 
@@ -87,7 +88,7 @@ namespace Jellyfin.Plugin.LocalRecs.ScheduledTasks
 
                 progress?.Report(80);
 
-                // Step 3: Sync .strm files for each user (80-90% progress)
+                // Step 3: Sync virtual library symlinks for each user (80-90% progress)
                 cancellationToken.ThrowIfCancellationRequested();
                 var successfulUsers = 0;
                 var failedUsers = new List<string>();
@@ -100,7 +101,7 @@ namespace Jellyfin.Plugin.LocalRecs.ScheduledTasks
                     {
                         if (userRecommendations.TryGetValue(user.Id, out var recs))
                         {
-                            _logger.LogDebug("Syncing .strm files for user {UserName} ({UserId})", user.Username, user.Id);
+                            _logger.LogDebug("Syncing virtual library symlinks for user {UserName} ({UserId})", user.Username, user.Id);
 
                             // Update virtual library files
                             _virtualLibraryManager.SyncRecommendations(
@@ -115,7 +116,7 @@ namespace Jellyfin.Plugin.LocalRecs.ScheduledTasks
 
                             successfulUsers++;
                             _logger.LogDebug(
-                                "Successfully updated .strm files for {UserName}: {MovieCount} movies, {TvCount} TV shows",
+                                "Successfully updated virtual library symlinks for {UserName}: {MovieCount} movies, {TvCount} TV shows",
                                 user.Username,
                                 recs.Movies.Count,
                                 recs.Tv.Count);
@@ -127,7 +128,7 @@ namespace Jellyfin.Plugin.LocalRecs.ScheduledTasks
                     }
                     catch (Exception ex)
                     {
-                        _logger.LogError(ex, "Failed to sync .strm files for user {UserName} ({UserId})", user.Username, user.Id);
+                        _logger.LogError(ex, "Failed to sync virtual library symlinks for user {UserName} ({UserId})", user.Username, user.Id);
                         failedUsers.Add(user.Username);
                     }
                 }
@@ -142,7 +143,7 @@ namespace Jellyfin.Plugin.LocalRecs.ScheduledTasks
 
                 progress?.Report(95);
 
-                // Note: Play status sync happens automatically via ItemAdded event when Jellyfin scans the new .strm files
+                // Play status sync happens automatically via ItemAdded event when Jellyfin scans new symlinks
 
                 // Step 5: Report results (100% progress)
                 var duration = DateTime.UtcNow - startTime;

@@ -130,6 +130,15 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
         }
 
         /// <summary>
+        /// Removes the per-user lock after a user is deleted.
+        /// </summary>
+        /// <param name="userId">User ID.</param>
+        public void RemoveUserLock(Guid userId)
+        {
+            _userLocks.TryRemove(userId, out _);
+        }
+
+        /// <summary>
         /// Clears and recreates recommendations for a user. Thread-safe per user.
         /// </summary>
         /// <param name="userId">User ID.</param>
@@ -502,20 +511,20 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
             var providerIds = series.ProviderIds ?? new Dictionary<string, string>();
             if (providerIds.TryGetValue("Tmdb", out var tmdb) && !string.IsNullOrEmpty(tmdb))
             {
-                sb.Append("  <tmdbid>").Append(tmdb).AppendLine("</tmdbid>");
-                sb.Append("  <uniqueid type=\"tmdb\">").Append(tmdb).AppendLine("</uniqueid>");
+                sb.Append("  <tmdbid>").Append(XmlEscape(tmdb)).AppendLine("</tmdbid>");
+                sb.Append("  <uniqueid type=\"tmdb\">").Append(XmlEscape(tmdb)).AppendLine("</uniqueid>");
             }
 
             if (providerIds.TryGetValue("Tvdb", out var tvdb) && !string.IsNullOrEmpty(tvdb))
             {
-                sb.Append("  <tvdbid>").Append(tvdb).AppendLine("</tvdbid>");
-                sb.Append("  <uniqueid type=\"tvdb\">").Append(tvdb).AppendLine("</uniqueid>");
+                sb.Append("  <tvdbid>").Append(XmlEscape(tvdb)).AppendLine("</tvdbid>");
+                sb.Append("  <uniqueid type=\"tvdb\">").Append(XmlEscape(tvdb)).AppendLine("</uniqueid>");
             }
 
             if (providerIds.TryGetValue("Imdb", out var imdb) && !string.IsNullOrEmpty(imdb))
             {
-                sb.Append("  <imdbid>").Append(imdb).AppendLine("</imdbid>");
-                sb.Append("  <uniqueid type=\"imdb\">").Append(imdb).AppendLine("</uniqueid>");
+                sb.Append("  <imdbid>").Append(XmlEscape(imdb)).AppendLine("</imdbid>");
+                sb.Append("  <uniqueid type=\"imdb\">").Append(XmlEscape(imdb)).AppendLine("</uniqueid>");
             }
 
             sb.AppendLine("</tvshow>");
@@ -531,7 +540,7 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
         }
 
         private string XmlEscape(string value)
-            => value.Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;").Replace("\"", "&quot;");
+            => value.Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;").Replace("\"", "&quot;").Replace("'", "&apos;");
 
         private bool TryCreateSymlink(string linkPath, string targetPath)
         {

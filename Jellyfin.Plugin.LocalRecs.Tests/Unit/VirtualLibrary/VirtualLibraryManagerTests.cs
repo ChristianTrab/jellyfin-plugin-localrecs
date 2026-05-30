@@ -1,16 +1,18 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Runtime.InteropServices;
 using FluentAssertions;
 using Jellyfin.Plugin.LocalRecs.Models;
 using Jellyfin.Plugin.LocalRecs.VirtualLibrary;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Entities.Movies;
+using MediaBrowser.Controller.Entities.TV;
 using MediaBrowser.Controller.Library;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using Xunit;
+using BaseItemKind = Jellyfin.Data.Enums.BaseItemKind;
 
 namespace Jellyfin.Plugin.LocalRecs.Tests.Unit.VirtualLibrary
 {
@@ -32,7 +34,6 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Unit.VirtualLibrary
             _testBasePath = Path.Combine(Path.GetTempPath(), "jellyfin-localrecs-tests", Guid.NewGuid().ToString());
             Directory.CreateDirectory(_testBasePath);
 
-            // Real source file so File.CreateSymbolicLink has something to point at
             _sourceMediaDir = Path.Combine(_testBasePath, "source", "TestMovie");
             Directory.CreateDirectory(_sourceMediaDir);
             _sourceMediaFile = Path.Combine(_sourceMediaDir, "TestMovie.mkv");
@@ -63,42 +64,7 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Unit.VirtualLibrary
             GC.SuppressFinalize(this);
         }
 
-        private static bool CanCreateSymlinks()
-        {
-            // Attempt to create a test symlink; if it fails (e.g. Windows without
-            // Developer Mode), skip tests that require real symlinks.
-            var probe = Path.Combine(Path.GetTempPath(), "jf-localrecs-symlink-probe-" + Guid.NewGuid());
-            var target = Path.Combine(Path.GetTempPath(), "jf-localrecs-symlink-target-" + Guid.NewGuid());
-            try
-            {
-                File.WriteAllText(target, "x");
-                File.CreateSymbolicLink(probe, target);
-                return true;
-            }
-            catch
-            {
-                return false;
-            }
-            finally
-            {
-                try
-                {
-                    if (File.Exists(probe))
-                    {
-                        File.Delete(probe);
-                    }
-
-                    if (File.Exists(target))
-                    {
-                        File.Delete(target);
-                    }
-                }
-                catch
-                {
-                    // Best effort cleanup
-                }
-            }
-        }
+        private static bool CanCreateSymlinks() => VirtualLibraryManagerTestsHelper.CanCreateSymlinks();
 
         [Fact]
         public void EnsureUserDirectoriesExist_CreatesMovieAndTvDirectories()
@@ -127,13 +93,10 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Unit.VirtualLibrary
             path.Should().Be(Path.Combine(_testBasePath, userId.ToString(), "tv"));
         }
 
-        [Fact]
+        [SkippableFact]
         public void SyncRecommendations_CreatesSymlinkToSourceMedia()
         {
-            if (!CanCreateSymlinks())
-            {
-                return;
-            }
+            Skip.IfNot(CanCreateSymlinks());
 
             var userId = Guid.NewGuid();
             _manager.EnsureUserDirectoriesExist(userId, "TestUser");
@@ -159,20 +122,16 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Unit.VirtualLibrary
             var mediaLinks = Directory.GetFiles(movieFolders[0], "*.mkv");
             mediaLinks.Should().HaveCount(1);
 
-            // Confirm it's actually a symlink pointing at the source
             var info = new FileInfo(mediaLinks[0]);
             info.LinkTarget.Should().NotBeNull();
             var target = info.ResolveLinkTarget(returnFinalTarget: true);
             target!.FullName.Should().Be(new FileInfo(_sourceMediaFile).FullName);
         }
 
-        [Fact]
+        [SkippableFact]
         public void SyncRecommendations_PreservesSourceFileExtension()
         {
-            if (!CanCreateSymlinks())
-            {
-                return;
-            }
+            Skip.IfNot(CanCreateSymlinks());
 
             var userId = Guid.NewGuid();
             _manager.EnsureUserDirectoriesExist(userId, "TestUser");
@@ -202,18 +161,14 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Unit.VirtualLibrary
             Directory.GetFiles(folder, "*.strm").Should().BeEmpty();
         }
 
-        [Fact]
+        [SkippableFact]
         public void SyncRecommendations_SymlinksArtworkFromSourceFolder()
         {
-            if (!CanCreateSymlinks())
-            {
-                return;
-            }
+            Skip.IfNot(CanCreateSymlinks());
 
             var userId = Guid.NewGuid();
             _manager.EnsureUserDirectoriesExist(userId, "TestUser");
 
-            // Drop artwork in source folder
             File.WriteAllText(Path.Combine(_sourceMediaDir, "poster.jpg"), "fake poster");
             File.WriteAllText(Path.Combine(_sourceMediaDir, "fanart.jpg"), "fake fanart");
 
@@ -239,13 +194,10 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Unit.VirtualLibrary
             new FileInfo(Path.Combine(folder, "poster.jpg")).LinkTarget.Should().NotBeNull();
         }
 
-        [Fact]
+        [SkippableFact]
         public void SyncRecommendations_ClearsOldRecommendationsBeforeCreatingNew()
         {
-            if (!CanCreateSymlinks())
-            {
-                return;
-            }
+            Skip.IfNot(CanCreateSymlinks());
 
             var userId = Guid.NewGuid();
             _manager.EnsureUserDirectoriesExist(userId, "TestUser");
@@ -282,6 +234,64 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Unit.VirtualLibrary
             movieFolders[0].Should().Contain("Movie 2");
         }
 
+        [SkippableFact]
+        public void SyncRecommendations_CreatesSeriesStructureWithEpisodesAndNfo()
+        {
+            Skip.IfNot(CanCreateSymlinks());
+
+            var userId = Guid.NewGuid();
+            _manager.EnsureUserDirectoriesExist(userId, "TestUser");
+
+            var seriesId = Guid.NewGuid();
+            var episodeId = Guid.NewGuid();
+            var episodePath = Path.Combine(_sourceMediaDir, "episode.mkv");
+            File.WriteAllText(episodePath, "episode");
+
+            var series = new Series
+            {
+                Id = seriesId,
+                Name = "Test Series",
+                Path = _sourceMediaDir,
+                ProductionYear = 2022,
+                ProviderIds = new Dictionary<string, string> { { "Tmdb", "12345" } }
+            };
+
+            var episode = new Episode
+            {
+                Id = episodeId,
+                Name = "Pilot",
+                Path = episodePath,
+                SeriesName = "Test Series",
+                ParentIndexNumber = 1,
+                IndexNumber = 1
+            };
+
+            _mockLibraryManager.Setup(m => m.GetItemById(seriesId)).Returns(series);
+            _mockLibraryManager.Setup(m => m.GetItemList(It.Is<InternalItemsQuery>(q =>
+                q.ParentId == seriesId &&
+                q.IncludeItemTypes != null &&
+                q.IncludeItemTypes.Contains(BaseItemKind.Episode))))
+                .Returns(new List<BaseItem> { episode });
+
+            _manager.SyncRecommendations(
+                userId,
+                new[] { new ScoredRecommendation(seriesId, 0.88f) },
+                MediaType.Series);
+
+            var tvPath = _manager.GetUserLibraryPath(userId, MediaType.Series);
+            var seriesFolders = Directory.GetDirectories(tvPath);
+            seriesFolders.Should().HaveCount(1);
+
+            var seriesFolder = seriesFolders[0];
+            File.Exists(Path.Combine(seriesFolder, "tvshow.nfo")).Should().BeTrue();
+            var nfo = File.ReadAllText(Path.Combine(seriesFolder, "tvshow.nfo"));
+            nfo.Should().Contain("<tmdbid>12345</tmdbid>");
+
+            var seasonFolder = Path.Combine(seriesFolder, "Season 01");
+            Directory.Exists(seasonFolder).Should().BeTrue();
+            Directory.GetFiles(seasonFolder, "*.mkv").Should().HaveCount(1);
+        }
+
         [Fact]
         public void DeleteUserDirectories_RemovesUserDirectory()
         {
@@ -293,6 +303,13 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Unit.VirtualLibrary
 
             _manager.DeleteUserDirectories(userId);
             Directory.Exists(userDir).Should().BeFalse();
+        }
+
+        [Fact]
+        public void RemoveUserLock_AllowsCleanupAfterUserDeletion()
+        {
+            var userId = Guid.NewGuid();
+            _manager.RemoveUserLock(userId);
         }
 
         [Fact]
@@ -308,13 +325,10 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Unit.VirtualLibrary
             Directory.GetFileSystemEntries(moviePath).Should().BeEmpty();
         }
 
-        [Fact]
+        [SkippableFact]
         public void SanitizeFilename_RemovesInvalidCharactersFromFolderName()
         {
-            if (!CanCreateSymlinks())
-            {
-                return;
-            }
+            Skip.IfNot(CanCreateSymlinks());
 
             var userId = Guid.NewGuid();
             _manager.EnsureUserDirectoriesExist(userId, "TestUser");

@@ -157,6 +157,27 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Domain
         }
 
         [Fact]
+        public void GenerateRecommendations_ColdStart_UserNotFound_ReturnsEmpty()
+        {
+            var library = TestMediaLibrary.CreateTestMovies();
+            var embeddings = CreateEmbeddings(library);
+            var metadata = library.ToDictionary(i => i.Id, i => i);
+            var missingUserId = Guid.NewGuid();
+
+            _mockUserManager.Setup(m => m.GetUserById(missingUserId)).Returns((User?)null);
+
+            var recommendations = _engine.GenerateRecommendations(
+                missingUserId,
+                userProfile: null,
+                embeddings,
+                metadata,
+                _config,
+                maxResults: 5);
+
+            recommendations.Should().BeEmpty();
+        }
+
+        [Fact]
         public void GenerateRecommendations_ColdStart_ReturnsTopRated()
         {
             // Arrange

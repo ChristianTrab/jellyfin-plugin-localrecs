@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using Jellyfin.Data.Enums;
 using Jellyfin.Plugin.LocalRecs.Models;
+using Jellyfin.Plugin.LocalRecs.VirtualLibrary;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Entities.Movies;
 using MediaBrowser.Controller.Entities.TV;
@@ -20,18 +21,22 @@ namespace Jellyfin.Plugin.LocalRecs.Services
     {
         private readonly ILibraryManager _libraryManager;
         private readonly ILogger<LibraryAnalysisService> _logger;
+        private readonly string _virtualLibraryBasePath;
 
         /// <summary>
         /// Initializes a new instance of the <see cref="LibraryAnalysisService"/> class.
         /// </summary>
         /// <param name="libraryManager">The Jellyfin library manager.</param>
         /// <param name="logger">The logger.</param>
+        /// <param name="virtualLibraryBasePath">Base path for virtual recommendation libraries.</param>
         public LibraryAnalysisService(
             ILibraryManager libraryManager,
-            ILogger<LibraryAnalysisService> logger)
+            ILogger<LibraryAnalysisService> logger,
+            string virtualLibraryBasePath)
         {
             _libraryManager = libraryManager ?? throw new ArgumentNullException(nameof(libraryManager));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+            _virtualLibraryBasePath = virtualLibraryBasePath ?? throw new ArgumentNullException(nameof(virtualLibraryBasePath));
         }
 
         /// <summary>
@@ -135,11 +140,9 @@ namespace Jellyfin.Plugin.LocalRecs.Services
                 return null;
             }
 
-            // Skip items from virtual libraries (our .strm recommendation files)
-            // This prevents virtual library items from being considered for recommendations
+            // Skip items from virtual recommendation libraries (symlinks under our base path)
             if (!string.IsNullOrEmpty(item.Path) &&
-                (item.Path.EndsWith(".strm", StringComparison.OrdinalIgnoreCase) ||
-                 item.Path.Contains("virtual-libraries", StringComparison.OrdinalIgnoreCase)))
+                VirtualLibraryPaths.IsUnderBasePath(item.Path, _virtualLibraryBasePath))
             {
                 _logger.LogDebug(
                     "Skipping virtual library item: {ItemName} ({ItemId}) at {Path}",

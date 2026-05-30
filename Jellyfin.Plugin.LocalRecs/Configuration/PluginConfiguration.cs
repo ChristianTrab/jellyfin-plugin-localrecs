@@ -9,6 +9,11 @@ namespace Jellyfin.Plugin.LocalRecs.Configuration
     public class PluginConfiguration : BasePluginConfiguration
     {
         /// <summary>
+        /// Maximum recommendations per user per media type.
+        /// </summary>
+        public const int MaxRecommendationCount = 500;
+
+        /// <summary>
         /// Initializes a new instance of the <see cref="PluginConfiguration"/> class.
         /// </summary>
         public PluginConfiguration()
@@ -97,9 +102,19 @@ namespace Jellyfin.Plugin.LocalRecs.Configuration
                 errors.Add("MovieRecommendationCount must be non-negative");
             }
 
+            if (MovieRecommendationCount > MaxRecommendationCount)
+            {
+                errors.Add($"MovieRecommendationCount must not exceed {MaxRecommendationCount}");
+            }
+
             if (TvRecommendationCount < 0)
             {
                 errors.Add("TvRecommendationCount must be non-negative");
+            }
+
+            if (TvRecommendationCount > MaxRecommendationCount)
+            {
+                errors.Add($"TvRecommendationCount must not exceed {MaxRecommendationCount}");
             }
 
             if (FavoriteBoost < 0)

@@ -22,7 +22,14 @@ namespace Jellyfin.Plugin.LocalRecs
         public void RegisterServices(IServiceCollection serviceCollection, IServerApplicationHost applicationHost)
         {
             // Phase 3: Embedding Layer Services
-            serviceCollection.AddSingleton<LibraryAnalysisService>();
+            serviceCollection.AddSingleton(sp =>
+            {
+                var virtualLibraryBasePath = GetVirtualLibraryBasePath(sp);
+                return new LibraryAnalysisService(
+                    sp.GetRequiredService<MediaBrowser.Controller.Library.ILibraryManager>(),
+                    sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<LibraryAnalysisService>>(),
+                    virtualLibraryBasePath);
+            });
             serviceCollection.AddSingleton<VocabularyBuilder>();
             serviceCollection.AddSingleton<EmbeddingService>();
 

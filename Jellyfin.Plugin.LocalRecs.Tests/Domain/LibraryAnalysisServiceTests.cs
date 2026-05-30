@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using FluentAssertions;
 using Jellyfin.Data.Enums;
@@ -24,13 +25,18 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Domain
     {
         private readonly Mock<ILibraryManager> _mockLibraryManager;
         private readonly LibraryAnalysisService _service;
+        private readonly string _virtualLibraryBasePath;
 
         public LibraryAnalysisServiceTests()
         {
+            _virtualLibraryBasePath = Path.Combine(Path.GetTempPath(), "jf-localrecs-analysis", Guid.NewGuid().ToString());
+            Directory.CreateDirectory(_virtualLibraryBasePath);
+
             _mockLibraryManager = new Mock<ILibraryManager>();
             _service = new LibraryAnalysisService(
                 _mockLibraryManager.Object,
-                NullLogger<LibraryAnalysisService>.Instance);
+                NullLogger<LibraryAnalysisService>.Instance,
+                _virtualLibraryBasePath);
         }
 
         #region GetAllMediaItems Tests
@@ -568,6 +574,43 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Domain
             // Assert
             result[0].TmdbId.Should().BeNull();
             result[0].TvdbId.Should().BeNull();
+        }
+
+        #endregion
+
+        #region Virtual Library Filtering Tests
+
+        [Fact]
+        public void GetAllMediaItems_SkipsItemsUnderVirtualLibraryBase()
+        {
+            var virtualMovie = CreateMockMovie("Virtual Rec", 2024);
+            virtualMovie.Path = Path.Combine(_virtualLibraryBasePath, Guid.NewGuid().ToString(), "movies", "Virtual.mkv");
+
+            var realMovie = CreateMockMovie("Real Movie", 2020);
+            realMovie.Path = @"C:\media\Real Movie.mkv";
+
+            SetupLibraryManagerReturns(new List<BaseItem> { virtualMovie, realMovie }, new List<BaseItem>());
+
+            var result = _service.GetAllMediaItems();
+
+            result.Should().HaveCount(1);
+            result[0].Name.Should().Be("Real Movie");
+        }
+
+        [Fact]
+        public void GetAllMediaItems_IncludesPathsWithSimilarSubstringOutsideBase()
+        {
+            var siblingBase = _virtualLibraryBasePath + "-backup";
+            Directory.CreateDirectory(siblingBase);
+
+            var movie = CreateMockMovie("Backup Library Movie", 2021);
+            movie.Path = Path.Combine(siblingBase, "Movie.mkv");
+
+            SetupLibraryManagerReturns(new List<BaseItem> { movie }, new List<BaseItem>());
+
+            var result = _service.GetAllMediaItems();
+
+            result.Should().HaveCount(1);
         }
 
         #endregion

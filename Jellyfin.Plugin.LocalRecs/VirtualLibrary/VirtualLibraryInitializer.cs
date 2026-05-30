@@ -83,8 +83,7 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
         /// <inheritdoc />
         public Task StopAsync(CancellationToken cancellationToken)
         {
-            // Dispose the play status sync service to unsubscribe from events and flush pending updates
-            _playStatusSyncService.Dispose();
+            // PlayStatusSyncService is a DI singleton; the host container disposes it on shutdown.
             _logger.LogInformation("Virtual library services stopped");
             return Task.CompletedTask;
         }
@@ -108,7 +107,7 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
             }
 
             // Get users once to avoid multiple enumerations
-            var users = _userManager.Users.ToList();
+            var users = _userManager.GetUsers().ToList();
             var successCount = 0;
 
             foreach (var user in users)
@@ -133,7 +132,7 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
 
         private void LogSetupInstructions()
         {
-            var users = _userManager.Users.ToList();
+            var users = _userManager.GetUsers().ToList();
 
             if (users.Count == 0)
             {

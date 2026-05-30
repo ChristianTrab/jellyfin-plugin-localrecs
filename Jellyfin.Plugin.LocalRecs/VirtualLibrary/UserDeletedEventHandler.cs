@@ -44,6 +44,7 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
                 user.Id);
 
             _virtualLibraryManager.DeleteUserDirectories(user.Id, user.Username);
+            _virtualLibraryManager.RemoveUserLock(user.Id);
 
             return Task.CompletedTask;
         }

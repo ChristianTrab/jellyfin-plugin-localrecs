@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.IO;
+using System.Linq;
 using System.Threading;
 using Jellyfin.Database.Implementations.Entities;
 using MediaBrowser.Controller.Entities;
@@ -85,7 +86,7 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
             _virtualLibraryBasePath = virtualLibraryBasePath ?? throw new ArgumentNullException(nameof(virtualLibraryBasePath));
 
             // Cache normalized base path for path comparison operations
-            _normalizedBasePath = NormalizePath(virtualLibraryBasePath);
+            _normalizedBasePath = VirtualLibraryPaths.NormalizeBasePath(virtualLibraryBasePath);
 
             // Initialize debounced queue
             _updateQueue = new ConcurrentDictionary<(Guid, Guid), (BaseItem, MediaBrowser.Controller.Entities.UserItemData)>();
@@ -182,8 +183,9 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
                     return;
                 }
 
-                // Iterate all symlinks under the user's virtual library
-                var linkPaths = Directory.EnumerateFiles(userVirtualLibraryPath, "*", SearchOption.AllDirectories);
+                // Iterate symlink files under the user's virtual library
+                var linkPaths = Directory.EnumerateFiles(userVirtualLibraryPath, "*", SearchOption.AllDirectories)
+                    .Where(VirtualLibraryPaths.IsSymbolicLink);
 
                 foreach (var linkPath in linkPaths)
                 {
@@ -241,7 +243,7 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
 
             _logger.LogInformation("Syncing play status from source library for all users");
 
-            foreach (var user in _userManager.Users)
+            foreach (var user in _userManager.GetUsers())
             {
                 try
                 {
@@ -275,21 +277,6 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
         }
 
         /// <summary>
-        /// Normalizes a path for cross-platform comparison.
-        /// Converts backslashes to forward slashes and ensures trailing separator.
-        /// </summary>
-        private static string NormalizePath(string path)
-        {
-            var normalized = path.Replace('\\', '/');
-            if (!normalized.EndsWith('/'))
-            {
-                normalized += '/';
-            }
-
-            return normalized;
-        }
-
-        /// <summary>
         /// Checks if source and target user data differ in any tracked fields.
         /// </summary>
         private static bool NeedsSync(
@@ -307,15 +294,7 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
         /// Checks if the given path is within the virtual library base path.
         /// </summary>
         private bool IsVirtualLibraryPath(string path)
-        {
-            if (string.IsNullOrEmpty(path))
-            {
-                return false;
-            }
-
-            var normalizedPath = path.Replace('\\', '/');
-            return normalizedPath.StartsWith(_normalizedBasePath, StringComparison.OrdinalIgnoreCase);
-        }
+            => VirtualLibraryPaths.IsUnderBasePath(path, _virtualLibraryBasePath);
 
         /// <summary>
         /// Extracts the user ID from a virtual library item path.
@@ -328,18 +307,23 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
                 return null;
             }
 
-            var normalizedPath = itemPath.Replace('\\', '/');
-
-            // Get the relative path after the base path
-            var relativePath = normalizedPath.Substring(_normalizedBasePath.Length);
-
-            // The first segment should be the user ID
-            var firstSlash = relativePath.IndexOf('/');
-            var userIdString = firstSlash > 0 ? relativePath.Substring(0, firstSlash) : relativePath;
-
-            if (Guid.TryParse(userIdString, out var userId))
+            try
             {
-                return userId;
+                var fullPath = Path.GetFullPath(itemPath).Replace('\\', '/');
+                var relativePath = fullPath.Substring(_normalizedBasePath.Length);
+
+                // The first segment should be the user ID
+                var firstSlash = relativePath.IndexOf('/');
+                var userIdString = firstSlash > 0 ? relativePath.Substring(0, firstSlash) : relativePath;
+
+                if (Guid.TryParse(userIdString, out var userId))
+                {
+                    return userId;
+                }
+            }
+            catch (Exception)
+            {
+                return null;
             }
 
             return null;

@@ -441,7 +441,8 @@ namespace Jellyfin.Plugin.LocalRecs.Services
             }
             else
             {
-                unwatchedCandidates = candidateMetadata.ToList();
+                _logger.LogWarning("User not found for cold-start recommendations: {UserId}", userId);
+                return new List<ScoredRecommendation>();
             }
 
             // Sort by community rating (primary) and critic rating (secondary)
